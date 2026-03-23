@@ -3,13 +3,19 @@ package docker
 import "time"
 
 type State struct {
-	Apps           map[string]*AppState `json:"apps"`
-	LastSelfUpdate OperationResult      `json:"lastSelfUpdate"`
+	Apps           map[string]*AppState       `json:"apps,omitempty"`
+	Accessories    map[string]*AccessoryState `json:"accessories,omitempty"`
+	LastSelfUpdate OperationResult            `json:"lastSelfUpdate"`
 }
 
 type AppState struct {
 	LastBackup OperationResult `json:"lastBackup"`
 	LastUpdate OperationResult `json:"lastUpdate"`
+}
+
+type AccessoryState struct {
+	LastDeploy      OperationResult `json:"lastDeploy"`
+	LastHealthCheck OperationResult `json:"lastHealthCheck"`
 }
 
 func (as *AppState) LastBackupResult() *OperationResult {
@@ -24,6 +30,20 @@ func (as *AppState) LastUpdateResult() *OperationResult {
 		return nil
 	}
 	return &as.LastUpdate
+}
+
+func (as *AccessoryState) LastDeployResult() *OperationResult {
+	if as == nil || as.LastDeploy.At.IsZero() {
+		return nil
+	}
+	return &as.LastDeploy
+}
+
+func (as *AccessoryState) LastHealthCheckResult() *OperationResult {
+	if as == nil || as.LastHealthCheck.At.IsZero() {
+		return nil
+	}
+	return &as.LastHealthCheck
 }
 
 type OperationResult struct {
@@ -46,6 +66,13 @@ func (s *State) AppState(appName string) *AppState {
 	return s.Apps[appName]
 }
 
+func (s *State) AccessoryState(name string) *AccessoryState {
+	if s.Accessories == nil {
+		return nil
+	}
+	return s.Accessories[name]
+}
+
 func (s *State) SelfUpdateDue() bool {
 	if s.LastSelfUpdate.At.IsZero() {
 		return true
@@ -63,6 +90,14 @@ func (s *State) RecordBackup(appName string, err error) {
 
 func (s *State) RecordUpdate(appName string, err error) {
 	s.ensureApp(appName).LastUpdate = newResult(err)
+}
+
+func (s *State) RecordAccessoryDeploy(name string, err error) {
+	s.ensureAccessory(name).LastDeploy = newResult(err)
+}
+
+func (s *State) RecordAccessoryHealthCheck(name string, err error) {
+	s.ensureAccessory(name).LastHealthCheck = newResult(err)
 }
 
 // Private
@@ -93,6 +128,20 @@ func (s *State) ensureApp(appName string) *AppState {
 	}
 
 	return app
+}
+
+func (s *State) ensureAccessory(name string) *AccessoryState {
+	if s.Accessories == nil {
+		s.Accessories = make(map[string]*AccessoryState)
+	}
+
+	accessory, ok := s.Accessories[name]
+	if !ok {
+		accessory = &AccessoryState{}
+		s.Accessories[name] = accessory
+	}
+
+	return accessory
 }
 
 // Helpers

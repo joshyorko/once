@@ -24,16 +24,16 @@ var (
 	ErrInvalidBackup      = errors.New("invalid backup archive")
 	ErrBackupPathRelative = errors.New("backup path must be absolute")
 	ErrSetupFailed        = errors.New("setup failed")
-	ErrPullFailed = &describedError{
+	ErrPullFailed         = &describedError{
 		msg:         "pull failed",
 		description: "Failed to download the application image. Check that the image name is correct and try again.",
 	}
-	ErrDeployFailed = errors.New("deploy failed")
+	ErrDeployFailed       = errors.New("deploy failed")
 	ErrVerificationFailed = &describedError{
 		msg:         "verification failed",
 		description: "The application did not respond to a health check after starting. It may have crashed or need longer to start up.",
 	}
-	ErrUnpauseFailed      = errors.New("failed to unpause container after backup")
+	ErrUnpauseFailed = errors.New("failed to unpause container after backup")
 )
 
 const (
@@ -138,12 +138,21 @@ func (a *Application) URL() string {
 }
 
 func (a *Application) Stop(ctx context.Context) error {
+	var errs []error
+	for _, accessory := range a.namespace.AccessoriesForApp(a.Settings.Name) {
+		if err := accessory.Stop(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("stopping accessory %s: %w", accessory.Settings.Name, err))
+		}
+	}
 	name, err := a.ContainerName(ctx)
 	if err != nil {
-		return err
+		errs = append(errs, err)
+		return errors.Join(errs...)
 	}
-
-	return a.namespace.client.ContainerStop(ctx, name, container.StopOptions{})
+	if err := a.namespace.client.ContainerStop(ctx, name, container.StopOptions{}); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func (a *Application) Start(ctx context.Context) error {
@@ -152,7 +161,16 @@ func (a *Application) Start(ctx context.Context) error {
 		return err
 	}
 
-	return a.namespace.client.ContainerStart(ctx, name, container.StartOptions{})
+	if err := a.namespace.client.ContainerStart(ctx, name, container.StartOptions{}); err != nil {
+		return err
+	}
+	var errs []error
+	for _, accessory := range a.namespace.AccessoriesForApp(a.Settings.Name) {
+		if err := accessory.Start(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("starting accessory %s: %w", accessory.Settings.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (a *Application) Update(ctx context.Context, progress DeployProgressCallback) (bool, error) {
@@ -175,6 +193,14 @@ func (a *Application) Update(ctx context.Context, progress DeployProgressCallbac
 	}
 
 	err = a.deployWithVolume(ctx, vol, progress)
+	if err == nil {
+		if verifyErr := a.VerifyHTTP(ctx); verifyErr != nil {
+			err = verifyErr
+		}
+	}
+	if err == nil {
+		err = a.reconcileAccessories(ctx, progress)
+	}
 	a.saveOperationResult(ctx, func(s *State) { s.RecordUpdate(a.Settings.Name, err) })
 	return true, err
 }
@@ -193,7 +219,13 @@ func (a *Application) Deploy(ctx context.Context, progress DeployProgressCallbac
 		return fmt.Errorf("getting volume: %w", err)
 	}
 
-	return a.deployWithVolume(ctx, vol, progress)
+	if err := a.deployWithVolume(ctx, vol, progress); err != nil {
+		return err
+	}
+	if err := a.VerifyHTTP(ctx); err != nil {
+		return err
+	}
+	return a.reconcileAccessories(ctx, progress)
 }
 
 func (a *Application) VerifyHTTP(ctx context.Context) error {
@@ -222,17 +254,32 @@ func (a *Application) VerifyHTTP(ctx context.Context) error {
 }
 
 func (a *Application) Remove(ctx context.Context, removeData bool) error {
-	if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
-		return fmt.Errorf("removing from proxy: %w", err)
+	var errs []error
+	for _, accessory := range a.namespace.AccessoriesForApp(a.Settings.Name) {
+		if err := accessory.Remove(ctx, removeData); err != nil {
+			errs = append(errs, fmt.Errorf("removing accessory %s: %w", accessory.Settings.Name, err))
+		}
 	}
-
-	return a.Destroy(ctx, removeData)
+	if err := a.namespace.Proxy().Remove(ctx, a.Settings.Name); err != nil {
+		errs = append(errs, fmt.Errorf("removing from proxy: %w", err))
+	}
+	if err := a.Destroy(ctx, removeData); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
+	var errs []error
+	for _, accessory := range a.namespace.AccessoriesForApp(a.Settings.Name) {
+		if err := accessory.Destroy(ctx, destroyVolumes); err != nil {
+			errs = append(errs, fmt.Errorf("removing accessory %s: %w", accessory.Settings.Name, err))
+		}
+	}
+
 	containers, err := a.namespace.client.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {
-		return err
+		return errors.Join(append(errs, err)...)
 	}
 
 	for _, c := range containers {
@@ -240,7 +287,7 @@ func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
 			name = strings.TrimPrefix(name, "/")
 			if a.namespace.containerAppName(name) == a.Settings.Name {
 				if err := a.namespace.client.ContainerRemove(ctx, c.ID, container.RemoveOptions{Force: true}); err != nil {
-					return fmt.Errorf("removing container: %w", err)
+					errs = append(errs, fmt.Errorf("removing container: %w", err))
 				}
 				break
 			}
@@ -250,16 +297,16 @@ func (a *Application) Destroy(ctx context.Context, destroyVolumes bool) error {
 	if destroyVolumes {
 		vol, err := FindVolume(ctx, a.namespace, a.Settings.Name)
 		if err != nil && !errors.Is(err, ErrVolumeNotFound) {
-			return fmt.Errorf("getting volume: %w", err)
+			errs = append(errs, fmt.Errorf("getting volume: %w", err))
 		}
 		if vol != nil {
 			if err := vol.Destroy(ctx); err != nil {
-				return err
+				errs = append(errs, err)
 			}
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // Private
@@ -358,10 +405,10 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	shortContainerID := resp.ID[:12]
 
 	if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-		AppName: a.Settings.Name,
-		Target:  shortContainerID,
-		Host:    a.Settings.Host,
-		TLS:     a.Settings.TLSEnabled(),
+		ServiceName: a.Settings.Name,
+		Target:      shortContainerID,
+		Host:        a.Settings.Host,
+		TLS:         a.Settings.TLSEnabled(),
 	}); err != nil {
 		a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 		if strings.Contains(err.Error(), "target not healthy") || strings.Contains(err.Error(), "deploy timed out") {
@@ -380,6 +427,16 @@ func (a *Application) deployWithVolume(ctx context.Context, vol *ApplicationVolu
 	}
 
 	return nil
+}
+
+func (a *Application) reconcileAccessories(ctx context.Context, progress DeployProgressCallback) error {
+	var errs []error
+	for _, accessory := range a.namespace.AccessoriesForApp(a.Settings.Name) {
+		if _, err := accessory.Update(ctx, progress); err != nil {
+			errs = append(errs, fmt.Errorf("updating accessory %s: %w", accessory.Settings.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
