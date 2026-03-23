@@ -69,6 +69,53 @@ From there you can set up a location for automatic backups, update your hostname
 
 You can also use the action menu, `a` to start and stop applications, or remove them completely.
 
+## Accessories
+
+Accessories are native Once-managed containers that live alongside applications.
+They use the same namespace and Docker network, but they are treated as a separate kind of service.
+
+Once supports two scopes:
+
+- `shared` accessories live once per namespace.
+- `per_app` accessories belong to one application and follow that app through deploys and restarts.
+
+Per-app accessories inherit the parent application's runtime by default. That means Once reuses the app image, environment, and storage volume mounts unless you override them.
+
+### Cloudflare Tunnel
+
+For Cloudflare Tunnel setups, configure the Once proxy to bind to `127.0.0.1` so only the local tunnel process can reach it:
+
+```sh
+once proxy configure --bind 127.0.0.1 --http-port 80 --https-port 443 --metrics-port 1318
+```
+
+### CLI examples
+
+Deploy a shared MinIO accessory:
+
+```sh
+once accessory deploy \
+  --name minio \
+  --template minio \
+  --env MINIO_ROOT_USER=root \
+  --env MINIO_ROOT_PASSWORD=secret \
+  --proxy-host minio.example.com
+```
+
+Deploy a per-app accessory that inherits the app runtime:
+
+```sh
+once accessory deploy \
+  --name worker \
+  --app campfire \
+  --image ghcr.io/example/worker:latest \
+  --cmd bundle exec rake worker:run
+```
+
+### Built-in templates
+
+The built-in `prometheus` and `alertmanager` templates are scaffolds only. They provide the image, command, and mount placeholders, but they do not generate config files for you.
+
 ## Making a ONCE-compatible application
 
 Fundamentally, ONCE works with any web application that:

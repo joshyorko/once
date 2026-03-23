@@ -52,27 +52,27 @@ func TestDashboardKeyboardSelectsPanel(t *testing.T) {
 	d.updateViewportSize()
 	d.rebuildViewportContent()
 
-	assert.Equal(t, 0, d.selectedIndex)
+	assert.Equal(t, 0, d.selectedAppIndex)
 
 	d, _ = updateDashboard(d, keyPressMsg("down"))
-	assert.Equal(t, 1, d.selectedIndex)
+	assert.Equal(t, 1, d.selectedAppIndex)
 
 	d, _ = updateDashboard(d, keyPressMsg("down"))
-	assert.Equal(t, 2, d.selectedIndex)
+	assert.Equal(t, 2, d.selectedAppIndex)
 
 	// Can't go past last
 	d, _ = updateDashboard(d, keyPressMsg("down"))
-	assert.Equal(t, 2, d.selectedIndex)
+	assert.Equal(t, 2, d.selectedAppIndex)
 
 	d, _ = updateDashboard(d, keyPressMsg("up"))
-	assert.Equal(t, 1, d.selectedIndex)
+	assert.Equal(t, 1, d.selectedAppIndex)
 
 	d, _ = updateDashboard(d, keyPressMsg("up"))
-	assert.Equal(t, 0, d.selectedIndex)
+	assert.Equal(t, 0, d.selectedAppIndex)
 
 	// Can't go before first
 	d, _ = updateDashboard(d, keyPressMsg("up"))
-	assert.Equal(t, 0, d.selectedIndex)
+	assert.Equal(t, 0, d.selectedAppIndex)
 }
 
 func TestDashboardKeyboardJK(t *testing.T) {
@@ -83,10 +83,10 @@ func TestDashboardKeyboardJK(t *testing.T) {
 	d.rebuildViewportContent()
 
 	d, _ = updateDashboard(d, keyPressMsg("j"))
-	assert.Equal(t, 1, d.selectedIndex)
+	assert.Equal(t, 1, d.selectedAppIndex)
 
 	d, _ = updateDashboard(d, keyPressMsg("k"))
-	assert.Equal(t, 0, d.selectedIndex)
+	assert.Equal(t, 0, d.selectedAppIndex)
 }
 
 func TestDashboard_ActionsMenuOpensOnA(t *testing.T) {
@@ -220,7 +220,7 @@ func testDashboard(numApps int) Dashboard {
 	systemScraper := system.NewScraper(system.ScraperSettings{BufferSize: 10})
 
 	dashboardShowDetails = true
-	return NewDashboard(nil, apps, 0, scraper, dockerScraper, systemScraper, nil)
+	return NewDashboard(nil, apps, nil, 0, 0, scraper, dockerScraper, systemScraper, nil)
 }
 
 func updateDashboard(d Dashboard, msg tea.Msg) (Dashboard, tea.Cmd) {

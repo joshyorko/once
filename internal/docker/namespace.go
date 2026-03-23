@@ -28,6 +28,7 @@ type Namespace struct {
 	client       *client.Client
 	proxy        *Proxy
 	applications []*Application
+	accessories  []*Accessory
 }
 
 type NamespaceOption func(*Namespace)
@@ -36,6 +37,14 @@ func WithApplications(apps ...ApplicationSettings) NamespaceOption {
 	return func(ns *Namespace) {
 		for _, s := range apps {
 			ns.addApplication(s)
+		}
+	}
+}
+
+func WithAccessories(accessories ...AccessorySettings) NamespaceOption {
+	return func(ns *Namespace) {
+		for _, s := range accessories {
+			ns.addAccessory(s)
 		}
 	}
 }
@@ -91,6 +100,13 @@ func (n *Namespace) addApplication(settings ApplicationSettings) *Application {
 	return app
 }
 
+func (n *Namespace) addAccessory(settings AccessorySettings) *Accessory {
+	accessory := NewAccessory(n, settings)
+	n.accessories = append(n.accessories, accessory)
+	n.sortAccessories()
+	return accessory
+}
+
 func (n *Namespace) Proxy() *Proxy {
 	return n.proxy
 }
@@ -104,13 +120,51 @@ func (n *Namespace) Application(name string) *Application {
 	return nil
 }
 
+func (n *Namespace) Accessory(name string) *Accessory {
+	for _, accessory := range n.accessories {
+		if accessory.Settings.Name == name {
+			return accessory
+		}
+	}
+	return nil
+}
+
 func (n *Namespace) Applications() []*Application {
 	return n.applications
+}
+
+func (n *Namespace) Accessories() []*Accessory {
+	return n.accessories
+}
+
+func (n *Namespace) SharedAccessories() []*Accessory {
+	var accessories []*Accessory
+	for _, accessory := range n.accessories {
+		if accessory.Settings.Scope == AccessoryScopeShared {
+			accessories = append(accessories, accessory)
+		}
+	}
+	return accessories
+}
+
+func (n *Namespace) AccessoriesForApp(appName string) []*Accessory {
+	var accessories []*Accessory
+	for _, accessory := range n.accessories {
+		if accessory.Settings.Scope == AccessoryScopePerApp && accessory.Settings.OwnerApp == appName {
+			accessories = append(accessories, accessory)
+		}
+	}
+	return accessories
 }
 
 func (n *Namespace) HostInUse(host string) bool {
 	for _, app := range n.applications {
 		if app.Settings.Host == host {
+			return true
+		}
+	}
+	for _, accessory := range n.accessories {
+		if accessory.Settings.Proxy.Enabled && accessory.Settings.Proxy.Host == host {
 			return true
 		}
 	}
@@ -120,6 +174,11 @@ func (n *Namespace) HostInUse(host string) bool {
 func (n *Namespace) HostInUseByAnother(host string, excludeApp string) bool {
 	for _, app := range n.applications {
 		if app.Settings.Host == host && app.Settings.Name != excludeApp {
+			return true
+		}
+	}
+	for _, accessory := range n.accessories {
+		if accessory.Settings.Proxy.Enabled && accessory.Settings.Proxy.Host == host {
 			return true
 		}
 	}
@@ -133,7 +192,7 @@ func (n *Namespace) UniqueName(base string) (string, error) {
 			return "", err
 		}
 		candidate := fmt.Sprintf("%s.%s", base, id)
-		if n.Application(candidate) == nil {
+		if !n.serviceNameInUse(candidate) {
 			return candidate, nil
 		}
 	}
@@ -166,21 +225,32 @@ func (n *Namespace) EnsureNetwork(ctx context.Context) error {
 }
 
 func (n *Namespace) Teardown(ctx context.Context, destroyVolumes bool) error {
+	var errs []error
+	for _, accessory := range n.accessories {
+		if err := accessory.Destroy(ctx, destroyVolumes); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, app := range n.applications {
 		if err := app.Destroy(ctx, destroyVolumes); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
 
 	if err := n.proxy.Destroy(ctx); err != nil {
-		return err
+		errs = append(errs, err)
 	}
 
-	return n.client.NetworkRemove(ctx, n.name)
+	if err := n.client.NetworkRemove(ctx, n.name); err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (n *Namespace) Refresh(ctx context.Context) error {
 	n.applications = nil
+	n.accessories = nil
 	return n.restoreState(ctx)
 }
 
@@ -271,11 +341,31 @@ func (n *Namespace) containerAppName(containerName string) string {
 	return appName
 }
 
+// containerAccessoryName extracts the accessory name from a container name
+// matching the pattern {namespace}-accessory-{accessoryName}-{id}. Returns ""
+// if the container name doesn't match.
+func (n *Namespace) containerAccessoryName(containerName string) string {
+	after, ok := strings.CutPrefix(containerName, n.name+"-accessory-")
+	if !ok {
+		return ""
+	}
+	accessoryName, _, ok := cutLast(after, "-")
+	if !ok {
+		return ""
+	}
+	return accessoryName
+}
+
 // Private
 
 type appCandidate struct {
 	app     *Application
 	created int64
+}
+
+type accessoryCandidate struct {
+	accessory *Accessory
+	created   int64
 }
 
 func (n *Namespace) restoreState(ctx context.Context) error {
@@ -286,9 +376,11 @@ func (n *Namespace) restoreState(ctx context.Context) error {
 
 	proxyPrefix := n.name + "-proxy"
 	appPrefix := n.name + "-app-"
+	accessoryPrefix := n.name + "-accessory-"
 
 	// Use a map to deduplicate apps by name, preferring the most recently created container
 	appsByName := make(map[string]appCandidate)
+	accessoriesByName := make(map[string]accessoryCandidate)
 
 	for _, c := range containers {
 		for _, name := range c.Names {
@@ -331,14 +423,44 @@ func (n *Namespace) restoreState(ctx context.Context) error {
 				}
 				break
 			}
+
+			if strings.HasPrefix(name, accessoryPrefix) {
+				label := c.Labels[labelKey]
+				if label != "" {
+					settings, err := UnmarshalAccessorySettings(label)
+					if err != nil {
+						return err
+					}
+					accessory := NewAccessory(n, settings)
+					accessory.Running = c.State == "running"
+					if accessory.Running {
+						info, err := n.client.ContainerInspect(ctx, c.ID)
+						if err == nil && info.State != nil {
+							if t, err := time.Parse(time.RFC3339Nano, info.State.StartedAt); err == nil {
+								accessory.RunningSince = t
+							}
+						}
+					}
+
+					existing, found := accessoriesByName[settings.Name]
+					if !found || c.Created > existing.created {
+						accessoriesByName[settings.Name] = accessoryCandidate{accessory: accessory, created: c.Created}
+					}
+				}
+				break
+			}
 		}
 	}
 
 	for _, candidate := range appsByName {
 		n.applications = append(n.applications, candidate.app)
 	}
+	for _, candidate := range accessoriesByName {
+		n.accessories = append(n.accessories, candidate.accessory)
+	}
 
 	n.sortApplications()
+	n.sortAccessories()
 	return nil
 }
 
@@ -346,6 +468,33 @@ func (n *Namespace) sortApplications() {
 	slices.SortFunc(n.applications, func(a, b *Application) int {
 		return strings.Compare(a.Settings.Host, b.Settings.Host)
 	})
+}
+
+func (n *Namespace) sortAccessories() {
+	slices.SortFunc(n.accessories, func(a, b *Accessory) int {
+		if a.Settings.Scope != b.Settings.Scope {
+			return strings.Compare(string(a.Settings.Scope), string(b.Settings.Scope))
+		}
+		if a.Settings.OwnerApp != b.Settings.OwnerApp {
+			return strings.Compare(a.Settings.OwnerApp, b.Settings.OwnerApp)
+		}
+		return strings.Compare(a.Settings.Name, b.Settings.Name)
+	})
+}
+
+func (n *Namespace) serviceNameInUse(name string) bool {
+	if n.Application(name) != nil || n.Accessory(name) != nil {
+		return true
+	}
+	return false
+}
+
+func (n *Namespace) accessoryVolumePrefix(accessoryName string) string {
+	return fmt.Sprintf("%s-accessory-%s-", n.name, accessoryName)
+}
+
+func (n *Namespace) accessoryVolumeName(accessoryName, mountName string) string {
+	return fmt.Sprintf("%s-accessory-%s-%s", n.name, accessoryName, mountName)
 }
 
 func (n *Namespace) parseBackup(r io.Reader) (ApplicationSettings, ApplicationVolumeSettings, []byte, error) {

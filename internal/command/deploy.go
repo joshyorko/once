@@ -11,8 +11,9 @@ import (
 )
 
 type deployCommand struct {
-	cmd  *cobra.Command
-	host string
+	cmd        *cobra.Command
+	host       string
+	disableTLS bool
 }
 
 func newDeployCommand() *deployCommand {
@@ -24,6 +25,7 @@ func newDeployCommand() *deployCommand {
 		RunE:  WithNamespace(d.run),
 	}
 	d.cmd.Flags().StringVar(&d.host, "host", "", "hostname for the application (defaults to <name>.localhost)")
+	d.cmd.Flags().BoolVar(&d.disableTLS, "disable-tls", false, "disable TLS for the application")
 	return d
 }
 
@@ -55,6 +57,7 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 		Name:       name,
 		Image:      imageRef,
 		Host:       host,
+		DisableTLS: d.disableTLS,
 		AutoUpdate: true,
 	})
 
@@ -70,7 +73,7 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 	}
 
 	if err := app.Deploy(ctx, progress); err != nil {
-		if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
+		if cleanupErr := cleanupFailedDeploy(app); cleanupErr != nil {
 			slog.Error("Failed to clean up after deploy failure", "app", name, "error", cleanupErr)
 		}
 		return fmt.Errorf("%w: %w", docker.ErrDeployFailed, err)
@@ -78,12 +81,19 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 
 	fmt.Println("Verifying...")
 	if err := app.VerifyHTTP(ctx); err != nil {
-		if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
+		if cleanupErr := cleanupFailedDeploy(app); cleanupErr != nil {
 			slog.Error("Failed to clean up after verification failure", "app", name, "error", cleanupErr)
 		}
 		return err
 	}
 
 	fmt.Printf("Deployed %s\n", name)
+	return nil
+}
+
+func cleanupFailedDeploy(app *docker.Application) error {
+	if err := app.Remove(context.Background(), true); err != nil {
+		return err
+	}
 	return nil
 }
