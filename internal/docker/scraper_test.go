@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,9 +58,32 @@ func newTestScraper(client statsClient) *Scraper {
 	return &Scraper{
 		settings: ScraperSettings{BufferSize: 10}.withDefaults(),
 		client:   client,
-		prefix:   "test-app-",
-		apps:     make(map[string]*appData),
-		streams:  make(map[string]*streamInfo),
+		names: []serviceNameMatcher{
+			{prefix: "test-app-", parse: func(containerName string) string {
+				after, ok := strings.CutPrefix(containerName, "test-app-")
+				if !ok {
+					return ""
+				}
+				name, _, ok := cutLast(after, "-")
+				if !ok {
+					return ""
+				}
+				return name
+			}},
+			{prefix: "test-accessory-", parse: func(containerName string) string {
+				after, ok := strings.CutPrefix(containerName, "test-accessory-")
+				if !ok {
+					return ""
+				}
+				name, _, ok := cutLast(after, "-")
+				if !ok {
+					return ""
+				}
+				return name
+			}},
+		},
+		apps:    make(map[string]*appData),
+		streams: make(map[string]*streamInfo),
 	}
 }
 
@@ -147,6 +171,30 @@ func TestScraperScrapeFindsContainers(t *testing.T) {
 	samples = s.Fetch("other", 1)
 	require.Len(t, samples, 1)
 	assert.Equal(t, 25.0, samples[0].CPUPercent)
+}
+
+func TestScraperScrapeFindsAccessories(t *testing.T) {
+	delivered := make(chan struct{}, 1)
+	client := &mockStatsClient{
+		containers: []container.Summary{
+			{ID: "abc123", Names: []string{"/test-accessory-cloudflared-xyz"}, State: "running"},
+		},
+		stats: map[string]container.StatsResponse{
+			"abc123": makeStats(12.5, 2048),
+		},
+		delivered: delivered,
+	}
+
+	s := newTestScraper(client)
+	s.Scrape(context.Background())
+
+	<-delivered
+	scrapeUntil(t, s, "cloudflared", 12.5)
+
+	samples := s.Fetch("cloudflared", 1)
+	require.Len(t, samples, 1)
+	assert.Equal(t, 12.5, samples[0].CPUPercent)
+	assert.Equal(t, uint64(2048), samples[0].MemoryBytes)
 }
 
 func TestScraperIgnoresStoppedContainers(t *testing.T) {

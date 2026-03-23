@@ -201,6 +201,35 @@ func TestDashboard_EmptyStateShowsMessage(t *testing.T) {
 	assert.Contains(t, view, "new app")
 }
 
+func TestDashboard_AccessoriesUseRichPanels(t *testing.T) {
+	d := testDashboardWithAccessories(1)
+	d, _ = updateDashboard(d, tea.WindowSizeMsg{Width: 120, Height: 40})
+	d, _ = updateDashboard(d, keyPressMsg("tab"))
+
+	view := d.View()
+	assert.Contains(t, view, "Accessories")
+	assert.Contains(t, view, "Details")
+	assert.Contains(t, view, "CPU")
+	assert.Contains(t, view, "Memory")
+}
+
+func TestDashboard_AccessoryKeyboardSelectsPanel(t *testing.T) {
+	d := testDashboardWithAccessories(3)
+	d, _ = updateDashboard(d, tea.WindowSizeMsg{Width: 120, Height: 40})
+	d, _ = updateDashboard(d, keyPressMsg("tab"))
+
+	assert.Equal(t, 0, d.selectedAccessoryIndex)
+
+	d, _ = updateDashboard(d, keyPressMsg("down"))
+	assert.Equal(t, 1, d.selectedAccessoryIndex)
+
+	d, _ = updateDashboard(d, keyPressMsg("j"))
+	assert.Equal(t, 2, d.selectedAccessoryIndex)
+
+	d, _ = updateDashboard(d, keyPressMsg("up"))
+	assert.Equal(t, 1, d.selectedAccessoryIndex)
+}
+
 // Helpers
 
 func testDashboard(numApps int) Dashboard {
@@ -221,6 +250,31 @@ func testDashboard(numApps int) Dashboard {
 
 	dashboardShowDetails = true
 	return NewDashboard(nil, apps, nil, 0, 0, scraper, dockerScraper, systemScraper, nil)
+}
+
+func testDashboardWithAccessories(numAccessories int) Dashboard {
+	accessories := make([]*docker.Accessory, numAccessories)
+	for i := range numAccessories {
+		accessories[i] = &docker.Accessory{
+			Running: true,
+			Settings: docker.AccessorySettings{
+				Name:  fmt.Sprintf("accessory-%d", i),
+				Image: "cloudflare/cloudflared:latest",
+				Scope: docker.AccessoryScopeShared,
+				Proxy: docker.AccessoryProxySettings{Host: fmt.Sprintf("accessory-%d.example.com", i)},
+				HealthCheck: docker.AccessoryHealthCheckSettings{
+					Type: docker.AccessoryHealthCheckHTTP,
+				},
+			},
+		}
+	}
+
+	scraper := metrics.NewMetricsScraper(metrics.ScraperSettings{})
+	dockerScraper := &docker.Scraper{}
+	systemScraper := system.NewScraper(system.ScraperSettings{BufferSize: 10})
+
+	dashboardShowDetails = true
+	return NewDashboard(nil, nil, accessories, 0, 0, scraper, dockerScraper, systemScraper, nil)
 }
 
 func updateDashboard(d Dashboard, msg tea.Msg) (Dashboard, tea.Cmd) {

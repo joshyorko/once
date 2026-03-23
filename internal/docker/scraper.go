@@ -43,12 +43,17 @@ type statsClient interface {
 type Scraper struct {
 	settings ScraperSettings
 	client   statsClient
-	prefix   string
+	names    []serviceNameMatcher
 
 	mu        sync.RWMutex
 	apps      map[string]*appData
 	streams   map[string]*streamInfo
 	lastError error
+}
+
+type serviceNameMatcher struct {
+	prefix string
+	parse  func(string) string
 }
 
 type streamInfo struct {
@@ -71,19 +76,22 @@ func NewScraper(ns *Namespace, settings ScraperSettings) *Scraper {
 	return &Scraper{
 		settings: settings,
 		client:   ns.client,
-		prefix:   ns.name + "-app-",
-		apps:     make(map[string]*appData),
-		streams:  make(map[string]*streamInfo),
+		names: []serviceNameMatcher{
+			{prefix: ns.name + "-app-", parse: ns.containerAppName},
+			{prefix: ns.name + "-accessory-", parse: ns.containerAccessoryName},
+		},
+		apps:    make(map[string]*appData),
+		streams: make(map[string]*streamInfo),
 	}
 }
 
-// Fetch returns the last n samples for an app, ordered from newest to oldest.
+// Fetch returns the last n samples for a service, ordered from newest to oldest.
 // If fewer than n samples exist, only the available samples are returned.
-func (s *Scraper) Fetch(appName string, n int) []Sample {
+func (s *Scraper) Fetch(serviceName string, n int) []Sample {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	data, ok := s.apps[appName]
+	data, ok := s.apps[serviceName]
 	if !ok {
 		return nil
 	}
@@ -110,9 +118,9 @@ func (s *Scraper) Scrape(ctx context.Context) {
 
 	now := time.Now()
 	s.mu.Lock()
-	for appName, data := range s.apps {
+	for serviceName, data := range s.apps {
 		var sample Sample
-		if _, running := containers[appName]; running && data.latest != nil {
+		if _, running := containers[serviceName]; running && data.latest != nil {
 			sample = Sample{
 				Timestamp:   now,
 				CPUPercent:  data.latest.cpuPercent,
@@ -143,11 +151,11 @@ func (s *Scraper) findAppContainers(ctx context.Context) (map[string]string, err
 		}
 		for _, name := range c.Names {
 			name = strings.TrimPrefix(name, "/")
-			if after, ok := strings.CutPrefix(name, s.prefix); ok {
-				if appName, _, ok := cutLast(after, "-"); ok {
-					result[appName] = c.ID
-				}
+			serviceName := s.serviceName(name)
+			if serviceName == "" {
+				continue
 			}
+			result[serviceName] = c.ID
 		}
 	}
 
@@ -156,13 +164,22 @@ func (s *Scraper) findAppContainers(ctx context.Context) (map[string]string, err
 
 // Private
 
+func (s *Scraper) serviceName(containerName string) string {
+	for _, matcher := range s.names {
+		if strings.HasPrefix(containerName, matcher.prefix) {
+			return matcher.parse(containerName)
+		}
+	}
+	return ""
+}
+
 func (s *Scraper) updateStreams(ctx context.Context, containers map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Start or restart streams for containers
-	for appName, containerID := range containers {
-		if stream, exists := s.streams[appName]; exists {
+	for serviceName, containerID := range containers {
+		if stream, exists := s.streams[serviceName]; exists {
 			if stream.containerID == containerID {
 				continue
 			}
@@ -170,29 +187,29 @@ func (s *Scraper) updateStreams(ctx context.Context, containers map[string]strin
 			stream.cancel()
 		}
 
-		if s.apps[appName] == nil {
-			s.apps[appName] = &appData{
+		if s.apps[serviceName] == nil {
+			s.apps[serviceName] = &appData{
 				samples: NewRingBuffer[Sample](s.settings.BufferSize),
 			}
 		}
 
 		streamCtx, cancel := context.WithCancel(ctx)
-		s.streams[appName] = &streamInfo{containerID: containerID, cancel: cancel}
-		go s.runStream(streamCtx, appName, containerID)
+		s.streams[serviceName] = &streamInfo{containerID: containerID, cancel: cancel}
+		go s.runStream(streamCtx, serviceName, containerID)
 	}
 
 	// Stop streams for removed containers
-	for appName, stream := range s.streams {
-		if _, exists := containers[appName]; !exists {
+	for serviceName, stream := range s.streams {
+		if _, exists := containers[serviceName]; !exists {
 			stream.cancel()
-			delete(s.streams, appName)
+			delete(s.streams, serviceName)
 		}
 	}
 }
 
-func (s *Scraper) runStream(ctx context.Context, appName, containerID string) {
+func (s *Scraper) runStream(ctx context.Context, serviceName, containerID string) {
 	for {
-		s.streamStats(ctx, appName, containerID)
+		s.streamStats(ctx, serviceName, containerID)
 
 		select {
 		case <-ctx.Done():
@@ -203,7 +220,7 @@ func (s *Scraper) runStream(ctx context.Context, appName, containerID string) {
 	}
 }
 
-func (s *Scraper) streamStats(ctx context.Context, appName, containerID string) {
+func (s *Scraper) streamStats(ctx context.Context, serviceName, containerID string) {
 	resp, err := s.client.ContainerStats(ctx, containerID, true)
 	if err != nil {
 		return
@@ -218,7 +235,7 @@ func (s *Scraper) streamStats(ctx context.Context, appName, containerID string) 
 		}
 
 		s.mu.Lock()
-		if data := s.apps[appName]; data != nil {
+		if data := s.apps[serviceName]; data != nil {
 			data.latest = &liveStats{
 				cpuPercent:  calculateCPUPercent(&stats),
 				memoryBytes: stats.MemoryStats.Usage,
