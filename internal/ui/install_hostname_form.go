@@ -22,12 +22,24 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 		hostnameField.SetPlaceholder(appName + ".example.com")
 	}
 
+	tlsField := NewCheckboxField("Enabled", !docker.IsLocalhost(hostnameField.Value()))
+	tlsField.SetDisabledWhen(func() (bool, string) {
+		if docker.IsLocalhost(hostnameField.Value()) {
+			return true, "Not available for localhost"
+		}
+		return false, ""
+	})
+
 	m := InstallHostnameForm{
 		form: NewForm("Install",
 			FormItem{
 				Label:    "Hostname",
 				Field:    hostnameField,
 				Required: true,
+			},
+			FormItem{
+				Label: "TLS",
+				Field: tlsField,
 			},
 		),
 		imageRef: imageRef,
@@ -37,8 +49,9 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg {
 			return InstallFormSubmitMsg{
-				ImageRef: imageRef,
-				Hostname: f.TextField(0).Value(),
+				ImageRef:   imageRef,
+				Hostname:   f.TextField(0).Value(),
+				DisableTLS: !f.CheckboxField(1).Checked(),
 			}
 		}
 	})
