@@ -27,7 +27,24 @@ func TestInstallAppList_SelectKnownApp(t *testing.T) {
 func TestInstallAppList_SelectOther(t *testing.T) {
 	list := NewInstallAppList()
 
-	// Wrap up from first item to reach last item ("Custom Docker image")
+	// Wrap up from first item to reach "Shared accessory"
+	list, _ = list.Update(keyPressMsg("up"))
+	list, cmd := list.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+
+	_, cmd = list.Update(cmd().(MenuSelectMsg))
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	_, ok := msg.(InstallAccessorySelectedMsg)
+	assert.True(t, ok, "expected InstallAccessorySelectedMsg, got %T", msg)
+}
+
+func TestInstallAppList_SelectCustomDockerImage(t *testing.T) {
+	list := NewInstallAppList()
+
+	// Move to "Custom Docker image"
+	list, _ = list.Update(keyPressMsg("up"))
 	list, _ = list.Update(keyPressMsg("up"))
 	list, cmd := list.Update(keyPressMsg("enter"))
 	require.NotNil(t, cmd)
@@ -61,11 +78,12 @@ func TestInstallAppList_View(t *testing.T) {
 	list := NewInstallAppList()
 	view := list.View()
 
-	assert.Contains(t, view, "Choose an application")
+	assert.Contains(t, view, "Choose a starting point")
 	assert.Contains(t, view, "Campfire")
 	assert.Contains(t, view, "Fizzy")
 	assert.Contains(t, view, "Writebook")
 	assert.Contains(t, view, "Custom Docker image")
+	assert.Contains(t, view, "Shared accessory")
 }
 
 func TestExpandAlias(t *testing.T) {

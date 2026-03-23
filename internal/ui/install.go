@@ -175,6 +175,9 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.state = installStateImageForm
 		return m, m.initScreenWithSize()
 
+	case InstallAccessorySelectedMsg:
+		return m, func() tea.Msg { return NavigateToAccessoryInstallMsg{} }
+
 	case InstallImageSubmitMsg:
 		m.hostnameForm = NewInstallHostnameForm(msg.ImageRef, "")
 		m.customImage = true
