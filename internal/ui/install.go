@@ -43,7 +43,7 @@ type Install struct {
 	appList       InstallAppList
 	imageForm     InstallImageForm
 	hostnameForm  InstallHostnameForm
-	activity      *InstallActivity
+	activity      *DeployActivity
 	popupHelp     *PopupHelp
 	starfield     *Starfield
 	logo          *Logo

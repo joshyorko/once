@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -41,15 +40,11 @@ type InstallAccessory struct {
 	menu          Menu
 	form          Form
 	env           Component
-	progress      Progress
+	activity      *DeployActivity
 	err           error
 	template      accessorytemplates.Template
 	settings      docker.AccessorySettings
 	presetApp     string
-}
-
-type installAccessoryFinishedMsg struct {
-	err error
 }
 
 type installAccessoryFormErrorMsg struct {
@@ -98,8 +93,8 @@ func (m InstallAccessory) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if m.state == installAccessoryStateEnvironment {
 			m.env, _ = m.env.Update(msg)
 		}
-		if m.state == installAccessoryStateActivity {
-			m.progress = m.progress.SetWidth(m.width)
+		if m.state == installAccessoryStateActivity && m.activity != nil {
+			m.activity.Update(msg)
 		}
 		return m, nil
 	case MouseEvent:
@@ -134,16 +129,17 @@ func (m InstallAccessory) Update(msg tea.Msg) (Component, tea.Cmd) {
 	case AccessoryEnvironmentCancelMsg:
 		m.state = installAccessoryStateForm
 		return m, nil
-	case installAccessoryFinishedMsg:
-		if msg.err != nil {
-			if len(m.template.RequiredEnv) > 0 || len(m.settings.EnvVars) > 0 {
-				m.state = installAccessoryStateEnvironment
-			} else {
-				m.state = installAccessoryStateForm
-			}
-			m.err = msg.err
-			return m, nil
+	case AccessoryInstallActivityFailedMsg:
+		m.activity = nil
+		m.err = msg.Err
+		if len(m.template.RequiredEnv) > 0 || len(m.settings.EnvVars) > 0 {
+			m.state = installAccessoryStateEnvironment
+		} else {
+			m.state = installAccessoryStateForm
 		}
+		return m, nil
+	case AccessoryInstallActivityDoneMsg:
+		m.activity = nil
 		return m, func() tea.Msg { return NavigateToDashboardMsg{AllowEmpty: true} }
 	case installAccessoryFormErrorMsg:
 		m.err = msg.err
@@ -161,6 +157,9 @@ func (m InstallAccessory) Update(msg tea.Msg) (Component, tea.Cmd) {
 		m.env, cmd = m.env.Update(msg)
 		return m, cmd
 	}
+	if m.state == installAccessoryStateActivity && m.activity != nil {
+		return m, m.activity.Update(msg)
+	}
 	var cmd tea.Cmd
 	m.menu, cmd = m.menu.Update(msg)
 	return m, cmd
@@ -174,7 +173,9 @@ func (m InstallAccessory) View() string {
 	case installAccessoryStateEnvironment:
 		content = m.env.View()
 	case installAccessoryStateActivity:
-		content = m.progress.View()
+		if m.activity != nil {
+			content = m.activity.View()
+		}
 	default:
 		content = m.menu.View()
 	}
@@ -223,16 +224,22 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 }
 
 func (m InstallAccessory) deployAccessory() (InstallAccessory, tea.Cmd) {
-	m.state = installAccessoryStateActivity
-	m.progress = NewProgress(m.width, Colors.Border)
-	return m, tea.Batch(m.progress.Init(), func() tea.Msg {
-		if err := m.template.Validate(m.settings); err != nil {
-			return installAccessoryFinishedMsg{err: err}
+	if err := m.template.Validate(m.settings); err != nil {
+		m.err = err
+		if len(m.template.RequiredEnv) > 0 || len(m.settings.EnvVars) > 0 {
+			m.state = installAccessoryStateEnvironment
+		} else {
+			m.state = installAccessoryStateForm
 		}
-		accessory := docker.NewAccessory(m.namespace, m.settings)
-		err := accessory.Deploy(context.Background(), nil)
-		return installAccessoryFinishedMsg{err: err}
-	})
+		return m, nil
+	}
+
+	m.state = installAccessoryStateActivity
+	m.activity = NewAccessoryInstallActivity(m.namespace, m.settings)
+	if m.width > 0 {
+		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	}
+	return m, m.activity.Init()
 }
 
 func (m InstallAccessory) templateForm(index AccessoryTemplateIndex) Form {
