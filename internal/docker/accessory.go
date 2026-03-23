@@ -295,12 +295,8 @@ func (a *Accessory) deployWithRuntime(ctx context.Context, runtime accessoryRunt
 		if port := effective.Proxy.TargetPort; port != 0 && port != 80 {
 			target = fmt.Sprintf("%s:%d", shortContainerID, port)
 		}
-		if err := a.namespace.Proxy().Deploy(ctx, DeployOptions{
-			ServiceName: a.Settings.Name,
-			Target:      target,
-			Host:        effective.Proxy.Host,
-			TLS:         !effective.Proxy.DisableTLS,
-		}); err != nil {
+		opts := a.proxyDeployOptions(target, effective)
+		if err := a.namespace.Proxy().Deploy(ctx, opts); err != nil {
 			_ = a.namespace.client.ContainerRemove(ctx, resp.ID, container.RemoveOptions{Force: true})
 			return "", fmt.Errorf("registering with proxy: %w", err)
 		}
@@ -395,6 +391,31 @@ func (a *Accessory) containerConfig(effective AccessorySettings) *container.Conf
 		ExposedPorts: accessoryExposedPorts(effective.Ports),
 		Healthcheck:  healthcheck,
 	}
+}
+
+func (a *Accessory) proxyDeployOptions(target string, effective AccessorySettings) DeployOptions {
+	opts := DeployOptions{
+		ServiceName: a.Settings.Name,
+		Target:      target,
+		Host:        effective.Proxy.Host,
+		TLS:         !effective.Proxy.DisableTLS,
+	}
+
+	switch effective.HealthCheck.Type {
+	case AccessoryHealthCheckHTTP:
+		opts.HealthCheckPath = effective.HealthCheck.Path
+		if opts.HealthCheckPath == "" {
+			opts.HealthCheckPath = "/"
+		}
+		opts.HealthCheckPort = effective.HealthCheck.Port
+		if opts.HealthCheckPort == 0 {
+			opts.HealthCheckPort = effective.Proxy.TargetPort
+		}
+	default:
+		opts.Force = true
+	}
+
+	return opts
 }
 
 func (a *Accessory) effectiveRuntime(ctx context.Context) (AccessorySettings, accessoryRuntime, error) {
@@ -626,8 +647,14 @@ func healthcheckConfig(settings AccessorySettings) *container.HealthConfig {
 		if path == "" {
 			path = "/"
 		}
+		probe := fmt.Sprintf(
+			"if command -v curl >/dev/null 2>&1; then curl -fsS http://localhost:%d%s; "+
+				"elif command -v wget >/dev/null 2>&1; then wget -qO- http://localhost:%d%s >/dev/null; "+
+				"else exit 1; fi",
+			port, path, port, path,
+		)
 		return &container.HealthConfig{
-			Test: []string{"CMD-SHELL", fmt.Sprintf("curl -fsS http://localhost:%d%s || exit 1", port, path)},
+			Test: []string{"CMD-SHELL", probe},
 		}
 	case AccessoryHealthCheckExec:
 		if len(settings.HealthCheck.Command) == 0 {

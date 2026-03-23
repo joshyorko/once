@@ -84,3 +84,24 @@ func FormatAccessoryPortBinding(binding AccessoryPortBinding) string {
 	}
 	return fmt.Sprintf("%d:%d", binding.HostPort, binding.ContainerPort)
 }
+
+func MergeAccessoryMounts(base, overrides []AccessoryMount) []AccessoryMount {
+	merged := append([]AccessoryMount(nil), base...)
+
+	for _, override := range overrides {
+		replaced := false
+		for i, existing := range merged {
+			if existing.Target != override.Target {
+				continue
+			}
+			merged[i] = override
+			replaced = true
+			break
+		}
+		if !replaced {
+			merged = append(merged, override)
+		}
+	}
+
+	return merged
+}

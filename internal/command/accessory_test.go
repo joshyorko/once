@@ -31,3 +31,18 @@ func TestParsePortBinding(t *testing.T) {
 	assert.Equal(t, 9001, port.HostPort)
 	assert.Equal(t, 9000, port.ContainerPort)
 }
+
+func TestMergeAccessoryMountsReplacesTemplatePlaceholderByTarget(t *testing.T) {
+	base := []docker.AccessoryMount{
+		{Type: docker.AccessoryMountBind, Source: "/path/to/prometheus.yml", Target: "/etc/prometheus/prometheus.yml", ReadOnly: true},
+		{Type: docker.AccessoryMountVolume, Name: "data", Target: "/prometheus"},
+	}
+	overrides := []docker.AccessoryMount{
+		{Type: docker.AccessoryMountBind, Source: "/tmp/prometheus.yml", Target: "/etc/prometheus/prometheus.yml", ReadOnly: true},
+	}
+
+	merged := docker.MergeAccessoryMounts(base, overrides)
+	require.Len(t, merged, 2)
+	assert.Equal(t, "/tmp/prometheus.yml", merged[0].Source)
+	assert.Equal(t, "/etc/prometheus/prometheus.yml", merged[0].Target)
+}
