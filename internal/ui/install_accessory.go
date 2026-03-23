@@ -210,12 +210,152 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 		m.settings.InheritAppRuntime = true
 	}
 
+	f := m.templateForm(index)
+	m.form = f
+	m.state = installAccessoryStateForm
+	return m, m.form.Init()
+}
+
+func (m InstallAccessory) deployAccessory() (InstallAccessory, tea.Cmd) {
+	m.state = installAccessoryStateActivity
+	m.progress = NewProgress(m.width, Colors.Border)
+	return m, tea.Batch(m.progress.Init(), func() tea.Msg {
+		if err := m.template.Validate(m.settings); err != nil {
+			return installAccessoryFinishedMsg{err: err}
+		}
+		accessory := docker.NewAccessory(m.namespace, m.settings)
+		err := accessory.Deploy(context.Background(), nil)
+		return installAccessoryFinishedMsg{err: err}
+	})
+}
+
+func (m InstallAccessory) templateForm(index AccessoryTemplateIndex) Form {
+	switch index {
+	case 0:
+		return m.cloudflaredForm()
+	case 1:
+		return m.minioForm()
+	case 2:
+		return m.prometheusForm()
+	case 3:
+		return m.alertmanagerForm()
+	default:
+		return m.customAccessoryForm(index)
+	}
+}
+
+func (m InstallAccessory) cloudflaredForm() Form {
+	nameField := NewTextField("cloudflared")
+	nameField.SetValue(defaultAccessoryName(m.settings.Name, "cloudflared"))
+
+	f := NewForm("Deploy",
+		FormItem{Label: "Name", Field: nameField, Required: true},
+	)
+	f.OnSubmit(func(f *Form) tea.Cmd {
+		m.settings.Name = f.TextField(0).Value()
+		return func() tea.Msg { return InstallAccessorySubmitMsg{} }
+	})
+	return f
+}
+
+func (m InstallAccessory) minioForm() Form {
+	nameField := NewTextField("minio")
+	nameField.SetValue(defaultAccessoryName(m.settings.Name, "minio"))
+	proxyHost := NewTextField("minio.localhost")
+	proxyHost.SetValue(defaultString(m.settings.Proxy.Host, "minio.localhost"))
+	proxyPort := NewTextField("9001")
+	proxyPort.SetDigitsOnly(true)
+	proxyPort.SetValue(defaultIntString(m.settings.Proxy.TargetPort, 9001))
+
+	f := NewForm("Deploy",
+		FormItem{Label: "Name", Field: nameField, Required: true},
+		FormItem{Label: "Console host", Field: proxyHost},
+		FormItem{Label: "Console port", Field: proxyPort},
+	)
+	f.OnSubmit(func(f *Form) tea.Cmd {
+		m.settings.Name = f.TextField(0).Value()
+		m.settings.Proxy.Host = strings.TrimSpace(f.TextField(1).Value())
+		m.settings.Proxy.TargetPort, _ = strconv.Atoi(f.TextField(2).Value())
+		m.settings.Proxy.Enabled = m.settings.Proxy.Host != ""
+		m.settings.Proxy.DisableTLS = true
+		m.settings.HealthCheck = docker.AccessoryHealthCheckSettings{
+			Type: docker.AccessoryHealthCheckHTTP,
+			Port: 9000,
+			Path: "/minio/health/live",
+		}
+		return func() tea.Msg { return InstallAccessorySubmitMsg{} }
+	})
+	return f
+}
+
+func (m InstallAccessory) prometheusForm() Form {
+	nameField := NewTextField("prometheus")
+	nameField.SetValue(defaultAccessoryName(m.settings.Name, "prometheus"))
+	bindField := NewTextField("/path/to/prometheus.yml:/etc/prometheus/prometheus.yml:ro")
+	bindField.SetValue(accessoryMountField(m.settings.Mounts, docker.AccessoryMountBind))
+	proxyHost := NewTextField("prom.localhost")
+	proxyHost.SetValue(defaultString(m.settings.Proxy.Host, "prom.localhost"))
+	proxyPort := NewTextField("9090")
+	proxyPort.SetDigitsOnly(true)
+	proxyPort.SetValue(defaultIntString(m.settings.Proxy.TargetPort, 9090))
+
+	f := NewForm("Deploy",
+		FormItem{Label: "Name", Field: nameField, Required: true},
+		FormItem{Label: "Config bind", Field: bindField, Required: true},
+		FormItem{Label: "Proxy host", Field: proxyHost},
+		FormItem{Label: "Proxy port", Field: proxyPort},
+	)
+	f.OnSubmit(func(f *Form) tea.Cmd {
+		m.settings.Name = f.TextField(0).Value()
+		binds, err := parseAccessoryMountField(f.TextField(1).Value(), docker.AccessoryMountBind)
+		if err != nil {
+			return func() tea.Msg { return installAccessoryFormErrorMsg{err: fmt.Errorf("parsing bind mounts: %w", err)} }
+		}
+		m.settings.Mounts = docker.MergeAccessoryMounts(m.settings.Mounts, binds)
+		m.settings.Proxy.Host = strings.TrimSpace(f.TextField(2).Value())
+		m.settings.Proxy.TargetPort, _ = strconv.Atoi(f.TextField(3).Value())
+		m.settings.Proxy.Enabled = m.settings.Proxy.Host != ""
+		m.settings.Proxy.DisableTLS = true
+		m.settings.HealthCheck = docker.AccessoryHealthCheckSettings{
+			Type: docker.AccessoryHealthCheckHTTP,
+			Port: 9090,
+			Path: "/-/healthy",
+		}
+		return func() tea.Msg { return InstallAccessorySubmitMsg{} }
+	})
+	return f
+}
+
+func (m InstallAccessory) alertmanagerForm() Form {
+	nameField := NewTextField("alertmanager")
+	nameField.SetValue(defaultAccessoryName(m.settings.Name, "alertmanager"))
+	bindField := NewTextField("/path/to/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro")
+	bindField.SetValue(accessoryMountField(m.settings.Mounts, docker.AccessoryMountBind))
+
+	f := NewForm("Deploy",
+		FormItem{Label: "Name", Field: nameField, Required: true},
+		FormItem{Label: "Config bind", Field: bindField, Required: true},
+	)
+	f.OnSubmit(func(f *Form) tea.Cmd {
+		m.settings.Name = f.TextField(0).Value()
+		binds, err := parseAccessoryMountField(f.TextField(1).Value(), docker.AccessoryMountBind)
+		if err != nil {
+			return func() tea.Msg { return installAccessoryFormErrorMsg{err: fmt.Errorf("parsing bind mounts: %w", err)} }
+		}
+		m.settings.Mounts = docker.MergeAccessoryMounts(m.settings.Mounts, binds)
+		return func() tea.Msg { return InstallAccessorySubmitMsg{} }
+	})
+	return f
+}
+
+func (m InstallAccessory) customAccessoryForm(index AccessoryTemplateIndex) Form {
 	nameField := NewTextField("accessory")
+	nameField.SetValue(m.settings.Name)
 	imageField := NewTextField("user/repo:tag")
 	imageField.SetValue(m.settings.Image)
 	appField := NewTextField("owner-app")
 	appField.SetValue(m.settings.OwnerApp)
-	commandField := NewTextField("tunnel run")
+	commandField := NewTextField("command args")
 	commandField.SetValue(accessoryCommandField(m.settings.Command))
 	volumeField := NewTextField("data:/data:ro")
 	volumeField.SetValue(accessoryMountField(m.settings.Mounts, docker.AccessoryMountVolume))
@@ -239,7 +379,7 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 	}
 	healthHTTPPath := NewTextField("/up")
 	healthHTTPPath.SetValue(m.settings.HealthCheck.Path)
-	healthCommand := NewTextField("curl -fsS http://localhost/")
+	healthCommand := NewTextField("command args")
 	healthCommand.SetValue(accessoryCommandField(m.settings.HealthCheck.Command))
 	restartField := NewTextField("always")
 	restartField.SetValue(m.settings.RestartPolicy)
@@ -298,20 +438,26 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 		m.settings.RestartPolicy = strings.TrimSpace(f.TextField(13).Value())
 		return func() tea.Msg { return InstallAccessorySubmitMsg{} }
 	})
-	m.form = f
-	m.state = installAccessoryStateForm
-	return m, m.form.Init()
+	return f
 }
 
-func (m InstallAccessory) deployAccessory() (InstallAccessory, tea.Cmd) {
-	m.state = installAccessoryStateActivity
-	m.progress = NewProgress(m.width, Colors.Border)
-	return m, tea.Batch(m.progress.Init(), func() tea.Msg {
-		if err := m.template.Validate(m.settings); err != nil {
-			return installAccessoryFinishedMsg{err: err}
-		}
-		accessory := docker.NewAccessory(m.namespace, m.settings)
-		err := accessory.Deploy(context.Background(), nil)
-		return installAccessoryFinishedMsg{err: err}
-	})
+func defaultAccessoryName(current, fallback string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	return fallback
+}
+
+func defaultString(current, fallback string) string {
+	if strings.TrimSpace(current) != "" {
+		return current
+	}
+	return fallback
+}
+
+func defaultIntString(current, fallback int) string {
+	if current != 0 {
+		return strconv.Itoa(current)
+	}
+	return strconv.Itoa(fallback)
 }

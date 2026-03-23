@@ -48,10 +48,12 @@ func NewInstallHostnameForm(imageRef, title string) InstallHostnameForm {
 
 	m.form.OnSubmit(func(f *Form) tea.Cmd {
 		return func() tea.Msg {
+			hostname := f.TextField(0).Value()
+			disableTLS := docker.IsLocalhost(hostname) || !f.CheckboxField(1).Checked()
 			return InstallFormSubmitMsg{
 				ImageRef:   imageRef,
-				Hostname:   f.TextField(0).Value(),
-				DisableTLS: !f.CheckboxField(1).Checked(),
+				Hostname:   hostname,
+				DisableTLS: disableTLS,
 			}
 		}
 	})

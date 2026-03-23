@@ -249,7 +249,7 @@ func (f Form) Update(msg tea.Msg) (Form, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		f.width = msg.Width
-		inputWidth := min(f.width-4, 60)
+		inputWidth := min(max(f.width-20, 40), 84)
 		for _, item := range f.items {
 			item.Field.SetWidth(inputWidth)
 		}
@@ -348,7 +348,7 @@ func (f *Form) OnRebuild(fn func(f *Form)) {
 }
 
 func (f *Form) AppendItems(items ...FormItem) {
-	inputWidth := min(f.width-4, 60)
+	inputWidth := min(max(f.width-20, 40), 84)
 	for _, item := range items {
 		item.Field.SetWidth(inputWidth)
 	}
