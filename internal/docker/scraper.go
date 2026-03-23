@@ -41,9 +41,11 @@ type statsClient interface {
 // Background goroutines maintain streams for each container and update latest stats.
 // Scrape() snapshots the current values without blocking on Docker API calls.
 type Scraper struct {
-	settings ScraperSettings
-	client   statsClient
-	names    []serviceNameMatcher
+	settings        ScraperSettings
+	client          statsClient
+	names           []serviceNameMatcher
+	appPrefix       string
+	accessoryPrefix string
 
 	mu        sync.RWMutex
 	apps      map[string]*appData
@@ -74,8 +76,10 @@ type liveStats struct {
 func NewScraper(ns *Namespace, settings ScraperSettings) *Scraper {
 	settings = settings.withDefaults()
 	return &Scraper{
-		settings: settings,
-		client:   ns.client,
+		settings:        settings,
+		client:          ns.client,
+		appPrefix:       ns.name + "-app-",
+		accessoryPrefix: ns.name + "-accessory-",
 		names: []serviceNameMatcher{
 			{prefix: ns.name + "-app-", parse: ns.containerAppName},
 			{prefix: ns.name + "-accessory-", parse: ns.containerAccessoryName},
@@ -152,6 +156,9 @@ func (s *Scraper) findAppContainers(ctx context.Context) (map[string]string, err
 		for _, name := range c.Names {
 			name = strings.TrimPrefix(name, "/")
 			serviceName := s.serviceName(name)
+			if serviceName == "" && strings.HasPrefix(name, s.accessoryPrefix) {
+				serviceName = NameFromImageRef(c.Image)
+			}
 			if serviceName == "" {
 				continue
 			}

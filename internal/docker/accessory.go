@@ -34,6 +34,29 @@ func NewAccessory(ns *Namespace, settings AccessorySettings) *Accessory {
 	}
 }
 
+func (a *Accessory) DisplayName() string {
+	if name := strings.TrimSpace(a.Settings.Name); name != "" {
+		return name
+	}
+	if imageName := strings.TrimSpace(NameFromImageRef(a.Settings.Image)); imageName != "" {
+		return imageName
+	}
+	if host := strings.TrimSpace(a.Settings.Proxy.Host); host != "" {
+		return host
+	}
+	return "accessory"
+}
+
+func (a *Accessory) StatsName() string {
+	if name := strings.TrimSpace(a.Settings.Name); name != "" {
+		return name
+	}
+	if imageName := strings.TrimSpace(NameFromImageRef(a.Settings.Image)); imageName != "" {
+		return imageName
+	}
+	return ""
+}
+
 func (a *Accessory) ContainerName(ctx context.Context) (string, error) {
 	containers, err := a.namespace.client.ContainerList(ctx, container.ListOptions{All: true})
 	if err != nil {

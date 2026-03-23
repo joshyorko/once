@@ -32,14 +32,17 @@ func (p AccessoryPanel) View(selected bool, toggling bool, width int, scales Das
 		cards = p.buildMetricCards(scales)
 	}
 
-	name := Styles.Title.Render(p.accessory.Settings.Name)
+	displayName := p.accessory.DisplayName()
+	name := Styles.Title.Render(displayName)
 	imageName := docker.NameFromImageRef(p.accessoryImage())
 	if imageName == "" {
 		imageName = "accessory"
 	}
-	subtitle := lipgloss.NewStyle().Foreground(Colors.Border).Render("(" + imageName + ")")
-	badge := p.renderHealthBadge(cards)
-	left := badge + " " + name + " " + subtitle
+	leftParts := []string{p.renderHealthBadge(cards), name}
+	if imageName != "" && imageName != displayName {
+		leftParts = append(leftParts, lipgloss.NewStyle().Foreground(Colors.Border).Render("("+imageName+")"))
+	}
+	left := strings.Join(leftParts, " ")
 	right := renderAccessoryStateInfo(&p.accessory, toggling)
 	gap := max(innerWidth-2-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	titleLine := " " + left + strings.Repeat(" ", gap) + right + " "
@@ -199,7 +202,7 @@ func (p AccessoryPanel) fetchDockerData() (cpu, memory []float64) {
 		return nil, nil
 	}
 
-	samples := p.dockerScraper.Fetch(p.accessory.Settings.Name, containerStatsBuffer)
+	samples := p.dockerScraper.Fetch(p.accessory.StatsName(), containerStatsBuffer)
 	cpu = make([]float64, len(samples))
 	memory = make([]float64, len(samples))
 	for i, s := range samples {
