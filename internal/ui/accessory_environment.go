@@ -106,8 +106,8 @@ func (m AccessoryEnvironment) rowCount() int {
 }
 
 func (m AccessoryEnvironment) columnWidths() (int, int) {
-	totalWidth := max(min(m.width, 64), 6)
-	keyWidth := totalWidth / 3
+	totalWidth := min(max(m.width-20, 40), 96)
+	keyWidth := max(totalWidth/3, 14)
 	valueWidth := totalWidth - keyWidth - 1
 	return keyWidth, valueWidth
 }
