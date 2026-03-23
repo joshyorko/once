@@ -13,6 +13,7 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 
 	hostnameFormTypeText(&form, "chat.example.com")
 	hostnameFormPressTab(&form)
+	hostnameFormPressTab(&form)
 	form, cmd := form.Update(keyPressMsg("enter"))
 	require.NotNil(t, cmd)
 
@@ -21,12 +22,14 @@ func TestInstallHostnameForm_Submit(t *testing.T) {
 	require.True(t, ok, "expected InstallFormSubmitMsg, got %T", msg)
 	assert.Equal(t, "ghcr.io/basecamp/once-campfire", submit.ImageRef)
 	assert.Equal(t, "chat.example.com", submit.Hostname)
+	assert.False(t, submit.DisableTLS)
 }
 
 func TestInstallHostnameForm_Cancel(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit, tab to cancel
+	// Tab to TLS, tab to submit, tab to cancel
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	form, cmd := form.Update(keyPressMsg("enter"))
@@ -40,7 +43,8 @@ func TestInstallHostnameForm_Cancel(t *testing.T) {
 func TestInstallHostnameForm_RequiresHostname(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 
-	// Tab to submit button, then press enter with empty hostname
+	// Tab to TLS, tab to submit button, then press enter with empty hostname
+	hostnameFormPressTab(&form)
 	hostnameFormPressTab(&form)
 	form, _ = form.Update(keyPressMsg("enter"))
 	assert.True(t, form.form.HasError())
@@ -50,6 +54,20 @@ func TestInstallHostnameForm_Hostname(t *testing.T) {
 	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire:latest", "")
 	hostnameFormTypeText(&form, "app.example.com")
 	assert.Equal(t, "app.example.com", form.Hostname())
+}
+
+func TestInstallHostnameForm_LocalhostDisablesTLS(t *testing.T) {
+	form := NewInstallHostnameForm("ghcr.io/basecamp/once-campfire", "")
+	hostnameFormTypeText(&form, "chat.localhost")
+	hostnameFormPressTab(&form)
+	hostnameFormPressTab(&form)
+	form, cmd := form.Update(keyPressMsg("enter"))
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	submit, ok := msg.(InstallFormSubmitMsg)
+	require.True(t, ok)
+	assert.True(t, submit.DisableTLS)
 }
 
 func TestInstallHostnameForm_ShowsTitleWhenSet(t *testing.T) {

@@ -42,6 +42,7 @@ type InstallActivity struct {
 	namespace     *docker.Namespace
 	imageRef      string
 	hostname      string
+	disableTLS    bool
 	width, height int
 	stage         installStage
 	percentage    int
@@ -52,12 +53,13 @@ type InstallActivity struct {
 	cancel        context.CancelFunc
 }
 
-func NewInstallActivity(ns *docker.Namespace, imageRef, hostname string) *InstallActivity {
+func NewInstallActivity(ns *docker.Namespace, imageRef, hostname string, disableTLS bool) *InstallActivity {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &InstallActivity{
 		namespace:    ns,
 		imageRef:     imageRef,
 		hostname:     hostname,
+		disableTLS:   disableTLS,
 		stage:        stagePreparing,
 		progress:     NewProgress(0, Colors.Primary),
 		progressChan: make(chan installProgressMsg, 10),
@@ -179,6 +181,7 @@ func (m *InstallActivity) runInstall(ctx context.Context) {
 		Name:       appName,
 		Image:      m.imageRef,
 		Host:       hostname,
+		DisableTLS: m.disableTLS,
 		AutoUpdate: true,
 	})
 
@@ -192,7 +195,7 @@ func (m *InstallActivity) runInstall(ctx context.Context) {
 	}
 
 	if err := app.Deploy(ctx, progress); err != nil {
-		if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
+		if cleanupErr := app.Remove(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after deploy failure", "app", appName, "error", cleanupErr)
 		}
 		m.doneChan <- installDoneMsg{err: fmt.Errorf("%w: %w", docker.ErrDeployFailed, err)}
@@ -202,7 +205,7 @@ func (m *InstallActivity) runInstall(ctx context.Context) {
 	m.progressChan <- installProgressMsg{stage: stageVerifying}
 
 	if err := app.VerifyHTTP(ctx); err != nil {
-		if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
+		if cleanupErr := app.Remove(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after verification failure", "app", appName, "error", cleanupErr)
 		}
 		m.doneChan <- installDoneMsg{err: err}

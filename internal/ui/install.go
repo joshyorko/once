@@ -30,8 +30,9 @@ const (
 )
 
 type InstallFormSubmitMsg struct {
-	ImageRef string
-	Hostname string
+	ImageRef   string
+	Hostname   string
+	DisableTLS bool
 }
 
 type Install struct {
@@ -201,7 +202,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 			return m, nil
 		}
 		m.state = installStateActivity
-		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname)
+		m.activity = NewInstallActivity(m.namespace, msg.ImageRef, msg.Hostname, msg.DisableTLS)
 		m.activity.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		return m, m.activity.Init()
 
