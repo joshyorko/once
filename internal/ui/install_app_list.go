@@ -5,7 +5,10 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-const installAppListOtherKey = -1
+const (
+	installAppListOtherKey     = -1
+	installAppListAccessoryKey = -2
+)
 
 type KnownApp struct {
 	Name     string
@@ -20,8 +23,9 @@ var knownApps = []KnownApp{
 }
 
 type (
-	InstallAppSelectedMsg    struct{ ImageRef string }
-	InstallCustomSelectedMsg struct{}
+	InstallAppSelectedMsg       struct{ ImageRef string }
+	InstallCustomSelectedMsg    struct{}
+	InstallAccessorySelectedMsg struct{}
 )
 
 type InstallAppList struct {
@@ -29,11 +33,12 @@ type InstallAppList struct {
 }
 
 func NewInstallAppList() InstallAppList {
-	items := make([]MenuItem, 0, len(knownApps)+1)
+	items := make([]MenuItem, 0, len(knownApps)+2)
 	for i, app := range knownApps {
 		items = append(items, MenuItem{Label: app.Name, Key: i})
 	}
 	items = append(items, MenuItem{Label: "Custom Docker image", Key: installAppListOtherKey})
+	items = append(items, MenuItem{Label: "Shared accessory", Key: installAppListAccessoryKey})
 
 	return InstallAppList{menu: NewMenu(items...)}
 }
@@ -47,6 +52,9 @@ func (m InstallAppList) Update(msg tea.Msg) (InstallAppList, tea.Cmd) {
 	case MenuSelectMsg:
 		if msg.Key == installAppListOtherKey {
 			return m, func() tea.Msg { return InstallCustomSelectedMsg{} }
+		}
+		if msg.Key == installAppListAccessoryKey {
+			return m, func() tea.Msg { return InstallAccessorySelectedMsg{} }
 		}
 		app := knownApps[msg.Key]
 		return m, func() tea.Msg { return InstallAppSelectedMsg{ImageRef: app.ImageRef} }
@@ -68,7 +76,7 @@ func (m InstallAppList) View() string {
 		Foreground(Colors.Primary).
 		MarginBottom(1)
 
-	title := titleStyle.Render("Choose an application")
+	title := titleStyle.Render("Choose a starting point")
 	m.menu.SetWidth(lipgloss.Width(title))
 	menuView := m.menu.View()
 

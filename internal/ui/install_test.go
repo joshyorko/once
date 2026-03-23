@@ -44,6 +44,16 @@ func TestInstall_CustomImageFlow(t *testing.T) {
 	assert.Equal(t, installStateActivity, m.state)
 }
 
+func TestInstall_EmptyStateCanNavigateToAccessoryInstall(t *testing.T) {
+	m := newTestInstall()
+	_, cmd := updateInstall(m, InstallAccessorySelectedMsg{})
+	require.NotNil(t, cmd)
+
+	msg := cmd()
+	_, ok := msg.(NavigateToAccessoryInstallMsg)
+	assert.True(t, ok, "expected NavigateToAccessoryInstallMsg, got %T", msg)
+}
+
 func TestInstall_CLIModeSkipsToHostname(t *testing.T) {
 	m := NewInstall(nil, "campfire")
 	assert.Equal(t, installStateHostname, m.state)
