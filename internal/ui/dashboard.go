@@ -439,7 +439,8 @@ func (m *Dashboard) rebuildViewportContent() {
 		}
 	} else {
 		for i := range m.accessoryPanels {
-			views = append(views, m.accessoryPanels[i].View(i == m.selectedAccessoryIndex))
+			toggling := m.toggling && m.togglingApp == m.accessoryPanels[i].accessory.Settings.Name
+			views = append(views, m.accessoryPanels[i].View(i == m.selectedAccessoryIndex, toggling, m.width, scales))
 		}
 	}
 	m.viewport.SetContent(lipgloss.JoinVertical(lipgloss.Left, views...))
@@ -461,10 +462,26 @@ func (m *Dashboard) computeScales() DashboardScales {
 }
 
 func (m *Dashboard) scrollToSelection() {
-	if m.tab == dashboardTabAccessories {
+	if m.tab == dashboardTabAccessories && len(m.accessoryPanels) == 0 {
 		return
 	}
+	if m.tab == dashboardTabApplications && len(m.panels) == 0 {
+		return
+	}
+
 	panelTop := 0
+	if m.tab == dashboardTabAccessories {
+		for i := 0; i < m.selectedAccessoryIndex; i++ {
+			panelTop += m.accessoryPanels[i].Height()
+		}
+		panelBottom := panelTop + m.accessoryPanels[m.selectedAccessoryIndex].Height()
+		if panelTop < m.viewport.YOffset() {
+			m.viewport.SetYOffset(panelTop)
+		} else if panelBottom > m.viewport.YOffset()+m.viewport.Height() {
+			m.viewport.SetYOffset(panelBottom - m.viewport.Height())
+		}
+		return
+	}
 	for i := 0; i < m.selectedAppIndex; i++ {
 		panelTop += m.panels[i].Height(dashboardShowDetails)
 	}
@@ -490,6 +507,13 @@ func (m *Dashboard) panelIndexAtY(y int) (int, bool) {
 	contentRow := vpRow + m.viewport.YOffset()
 	top := 0
 	if m.tab == dashboardTabAccessories {
+		for i := range m.accessoryPanels {
+			h := m.accessoryPanels[i].Height()
+			if contentRow < top+h {
+				return i, true
+			}
+			top += h
+		}
 		return 0, false
 	}
 	for i := range m.panels {
@@ -509,7 +533,7 @@ func (m *Dashboard) buildPanels() {
 	}
 	m.accessoryPanels = make([]AccessoryPanel, len(m.accessories))
 	for i, accessory := range m.accessories {
-		m.accessoryPanels[i] = NewAccessoryPanel(accessory)
+		m.accessoryPanels[i] = NewAccessoryPanel(accessory, m.dockerScraper)
 	}
 }
 
