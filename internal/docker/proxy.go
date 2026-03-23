@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -37,9 +39,10 @@ const (
 )
 
 type ProxySettings struct {
-	HTTPPort    int `json:"httpPort"`
-	HTTPSPort   int `json:"httpsPort"`
-	MetricsPort int `json:"metricsPort"`
+	BindAddress string `json:"bindAddress,omitempty"`
+	HTTPPort    int    `json:"httpPort"`
+	HTTPSPort   int    `json:"httpsPort"`
+	MetricsPort int    `json:"metricsPort"`
 }
 
 func UnmarshalProxySettings(s string) (ProxySettings, error) {
@@ -54,10 +57,10 @@ func (s ProxySettings) Marshal() string {
 }
 
 type DeployOptions struct {
-	AppName string
-	Target  string
-	Host    string
-	TLS     bool
+	ServiceName string
+	Target      string
+	Host        string
+	TLS         bool
 }
 
 type Proxy struct {
@@ -70,6 +73,8 @@ func NewProxy(ns *Namespace) *Proxy {
 }
 
 func (p *Proxy) Boot(ctx context.Context, settings ProxySettings) error {
+	settings = normalizeProxySettings(settings)
+
 	if settings.HTTPPort == 0 {
 		settings.HTTPPort = DefaultHTTPPort
 	}
@@ -113,8 +118,8 @@ func (p *Proxy) Boot(ctx context.Context, settings ProxySettings) error {
 		},
 		&container.HostConfig{
 			PortBindings: nat.PortMap{
-				"80/tcp":       []nat.PortBinding{{HostPort: fmt.Sprintf("%d", settings.HTTPPort)}},
-				"443/tcp":      []nat.PortBinding{{HostPort: fmt.Sprintf("%d", settings.HTTPSPort)}},
+				"80/tcp":       []nat.PortBinding{{HostIP: settings.BindAddress, HostPort: fmt.Sprintf("%d", settings.HTTPPort)}},
+				"443/tcp":      []nat.PortBinding{{HostIP: settings.BindAddress, HostPort: fmt.Sprintf("%d", settings.HTTPSPort)}},
 				metricsPortTCP: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: fmt.Sprintf("%d", settings.MetricsPort)}},
 			},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyAlways},
@@ -129,7 +134,9 @@ func (p *Proxy) Boot(ctx context.Context, settings ProxySettings) error {
 		},
 		&network.NetworkingConfig{
 			EndpointsConfig: map[string]*network.EndpointSettings{
-				p.namespace.name: {},
+				p.namespace.name: {
+					Aliases: []string{"kamal-proxy"},
+				},
 			},
 		},
 		nil,
@@ -148,6 +155,49 @@ func (p *Proxy) Boot(ctx context.Context, settings ProxySettings) error {
 	}
 
 	p.Settings = &settings
+	return nil
+}
+
+func (p *Proxy) ApplySettings(ctx context.Context, settings ProxySettings) error {
+	settings = normalizeProxySettings(settings)
+	if settings.HTTPPort == 0 {
+		settings.HTTPPort = DefaultHTTPPort
+	}
+	if settings.HTTPSPort == 0 {
+		settings.HTTPSPort = DefaultHTTPSPort
+	}
+	if settings.MetricsPort == 0 {
+		settings.MetricsPort = DefaultMetricsPort
+	}
+
+	info, err := p.namespace.client.ContainerInspect(ctx, p.containerName())
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return p.Boot(ctx, settings)
+		}
+		return fmt.Errorf("inspecting proxy container: %w", err)
+	}
+
+	current := p.Settings
+	if current == nil {
+		current = &ProxySettings{}
+	}
+	if proxySettingsEqual(*current, settings) {
+		return p.ensureRunning(ctx, info)
+	}
+
+	if err := p.namespace.client.ContainerRemove(ctx, info.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return fmt.Errorf("removing proxy container: %w", err)
+	}
+
+	if err := p.Boot(ctx, settings); err != nil {
+		return err
+	}
+
+	if err := p.reRegisterRoutes(ctx); err != nil {
+		return fmt.Errorf("re-registering routes: %w", err)
+	}
+
 	return nil
 }
 
@@ -178,8 +228,8 @@ func (p *Proxy) Exec(ctx context.Context, cmd []string) error {
 	return err
 }
 
-func (p *Proxy) Remove(ctx context.Context, appName string) error {
-	return p.Exec(ctx, []string{"kamal-proxy", "remove", appName})
+func (p *Proxy) Remove(ctx context.Context, serviceName string) error {
+	return p.Exec(ctx, []string{"kamal-proxy", "remove", serviceName})
 }
 
 func (p *Proxy) Deploy(ctx context.Context, opts DeployOptions) error {
@@ -209,6 +259,7 @@ func (p *Proxy) ensureRunning(ctx context.Context, info container.InspectRespons
 		if err != nil {
 			return fmt.Errorf("unmarshalling proxy settings: %w", err)
 		}
+		settings = normalizeProxySettings(settings)
 		p.Settings = &settings
 	}
 
@@ -216,7 +267,7 @@ func (p *Proxy) ensureRunning(ctx context.Context, info container.InspectRespons
 }
 
 func (p *Proxy) deployArgs(opts DeployOptions) []string {
-	args := []string{"kamal-proxy", "deploy", opts.AppName, "--target", opts.Target, "--deploy-timeout", deployTimeout}
+	args := []string{"kamal-proxy", "deploy", opts.ServiceName, "--target", opts.Target, "--deploy-timeout", deployTimeout}
 
 	if opts.Host != "" {
 		args = append(args, "--host", opts.Host)
@@ -297,4 +348,75 @@ func (p *Proxy) ExecOutput(ctx context.Context, cmd []string) (string, error) {
 		return result.Stdout + result.Stderr, fmt.Errorf("exec failed with exit code %d", result.ExitCode)
 	}
 	return result.Stdout, nil
+}
+
+func (p *Proxy) reRegisterRoutes(ctx context.Context) error {
+	var errs []error
+	for _, app := range p.namespace.Applications() {
+		if !app.Running || app.Settings.Host == "" {
+			continue
+		}
+		target, err := serviceTarget(ctx, p.namespace.client, app.ContainerName)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if err := p.Deploy(ctx, DeployOptions{
+			ServiceName: app.Settings.Name,
+			Target:      target,
+			Host:        app.Settings.Host,
+			TLS:         app.Settings.TLSEnabled(),
+		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, accessory := range p.namespace.Accessories() {
+		if !accessory.Running || !accessory.Settings.Proxy.Enabled || accessory.Settings.Proxy.Host == "" {
+			continue
+		}
+		target, err := serviceTarget(ctx, p.namespace.client, accessory.ContainerName)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if port := accessory.Settings.Proxy.TargetPort; port != 0 && port != 80 {
+			target += fmt.Sprintf(":%d", port)
+		}
+		if err := p.Deploy(ctx, DeployOptions{
+			ServiceName: accessory.Settings.Name,
+			Target:      target,
+			Host:        accessory.Settings.Proxy.Host,
+			TLS:         !accessory.Settings.Proxy.DisableTLS,
+		}); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Private
+
+func normalizeProxySettings(settings ProxySettings) ProxySettings {
+	if settings.BindAddress == "" {
+		settings.BindAddress = "0.0.0.0"
+	}
+	return settings
+}
+
+func proxySettingsEqual(a, b ProxySettings) bool {
+	a = normalizeProxySettings(a)
+	b = normalizeProxySettings(b)
+	return a == b
+}
+
+func serviceTarget(ctx context.Context, c *client.Client, containerNameFn func(context.Context) (string, error)) (string, error) {
+	name, err := containerNameFn(ctx)
+	if err != nil {
+		return "", err
+	}
+	info, err := c.ContainerInspect(ctx, name)
+	if err != nil {
+		return "", fmt.Errorf("inspecting container %s: %w", name, err)
+	}
+	return info.ID[:12], nil
 }

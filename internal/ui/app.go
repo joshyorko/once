@@ -30,18 +30,31 @@ type (
 	scrapeUserStatsTickMsg struct{}
 	scrapeDoneMsg          struct{}
 
-	NavigateToInstallMsg   struct{}
-	NavigateToDashboardMsg struct {
+	NavigateToInstallMsg          struct{}
+	NavigateToAccessoryInstallMsg struct{}
+	NavigateToDashboardMsg        struct {
 		AppName    string
 		AllowEmpty bool
 	}
-	NavigateToAppMsg             struct{ App *docker.Application }
+	NavigateToAppMsg               struct{ App *docker.Application }
+	NavigateToAccessoryMsg         struct{ Accessory *docker.Accessory }
+	NavigateToAccessorySettingsMsg struct {
+		Accessory *docker.Accessory
+		Section   AccessorySettingsSectionType
+	}
+	NavigateToAccessoryLogsMsg struct {
+		Accessory *docker.Accessory
+	}
+	NavigateToAccessoryRemoveMsg struct {
+		Accessory *docker.Accessory
+	}
 	NavigateToSettingsSectionMsg struct {
 		App     *docker.Application
 		Section SettingsSectionType
 	}
-	NavigateToLogsMsg   struct{ App *docker.Application }
-	NavigateToRemoveMsg struct{ App *docker.Application }
+	NavigateToLogsMsg          struct{ App *docker.Application }
+	NavigateToRemoveMsg        struct{ App *docker.Application }
+	NavigateToProxySettingsMsg struct{}
 
 	QuitMsg struct{}
 )
@@ -77,6 +90,7 @@ func NewApp(ns *docker.Namespace, installImageRef string) *App {
 	eventChan := ns.EventWatcher().Watch(ctx)
 
 	apps := ns.Applications()
+	accessories := ns.Accessories()
 
 	metricsPort := docker.DefaultMetricsPort
 	if ns.Proxy().Settings != nil && ns.Proxy().Settings.MetricsPort != 0 {
@@ -106,8 +120,8 @@ func NewApp(ns *docker.Namespace, installImageRef string) *App {
 	userStats := userstats.NewReader(ns.Name())
 
 	var screen Component
-	if len(apps) > 0 && installImageRef == "" {
-		screen = NewDashboard(ns, apps, 0, scraper, dockerScraper, systemScraper, userStats)
+	if (len(apps) > 0 || len(accessories) > 0) && installImageRef == "" {
+		screen = NewDashboard(ns, apps, accessories, 0, 0, scraper, dockerScraper, systemScraper, userStats)
 	} else {
 		screen = NewInstall(ns, installImageRef)
 	}
@@ -199,6 +213,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case NavigateToInstallMsg:
 		return m, m.navigateTo(NewInstall(m.namespace, ""))
 
+	case NavigateToAccessoryInstallMsg:
+		return m, m.navigateTo(NewInstallAccessory(m.namespace, nil, ""))
+
 	case NavigateToAppMsg:
 		if err := m.namespace.Refresh(m.watchCtx); err != nil {
 			slog.Error("refreshing namespace", "err", err)
@@ -211,7 +228,22 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		return m, m.navigateTo(NewDashboard(m.namespace, apps, targetIndex, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
+		return m, m.navigateTo(NewDashboard(m.namespace, apps, m.namespace.Accessories(), targetIndex, 0, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
+
+	case NavigateToAccessoryMsg:
+		if err := m.namespace.Refresh(m.watchCtx); err != nil {
+			slog.Error("refreshing namespace", "err", err)
+		}
+		return m, m.navigateTo(NewAccessoryLogs(m.namespace, msg.Accessory))
+
+	case NavigateToAccessorySettingsMsg:
+		return m, m.navigateTo(NewAccessorySettings(m.namespace, msg.Accessory, msg.Section))
+
+	case NavigateToAccessoryLogsMsg:
+		return m, m.navigateTo(NewAccessoryLogs(m.namespace, msg.Accessory))
+
+	case NavigateToAccessoryRemoveMsg:
+		return m, m.navigateTo(NewAccessoryRemove(m.namespace, msg.Accessory))
 
 	case NavigateToDashboardMsg:
 		if err := m.namespace.Refresh(m.watchCtx); err != nil {
@@ -229,7 +261,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 		}
-		return m, m.navigateTo(NewDashboard(m.namespace, apps, selectedIndex, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
+		return m, m.navigateTo(NewDashboard(m.namespace, apps, m.namespace.Accessories(), selectedIndex, 0, m.scraper, m.dockerScraper, m.systemScraper, m.userStats))
 
 	case NavigateToSettingsSectionMsg:
 		return m, m.navigateTo(NewSettings(m.namespace, msg.App, msg.Section))
@@ -239,6 +271,9 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case NavigateToLogsMsg:
 		return m, m.navigateTo(NewLogs(m.namespace, msg.App))
+
+	case NavigateToProxySettingsMsg:
+		return m, m.navigateTo(NewProxySettings(m.namespace))
 
 	case QuitMsg:
 		m.shutdown()
