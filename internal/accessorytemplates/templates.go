@@ -1,6 +1,11 @@
 package accessorytemplates
 
-import "github.com/basecamp/once/internal/docker"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/basecamp/once/internal/docker"
+)
 
 type Template struct {
 	Alias          string
@@ -51,6 +56,7 @@ func Builtins() []Template {
 				Proxy:             docker.AccessoryProxySettings{Enabled: false},
 				InheritAppRuntime: false,
 			},
+			RequiredMounts: []string{"/etc/prometheus/prometheus.yml"},
 		},
 		{
 			Alias:       "alertmanager",
@@ -63,6 +69,7 @@ func Builtins() []Template {
 				Proxy:             docker.AccessoryProxySettings{Enabled: false},
 				InheritAppRuntime: false,
 			},
+			RequiredMounts: []string{"/etc/alertmanager/alertmanager.yml"},
 		},
 	}
 }
@@ -74,4 +81,30 @@ func ByAlias(alias string) (Template, bool) {
 		}
 	}
 	return Template{}, false
+}
+
+func (t Template) Validate(settings docker.AccessorySettings) error {
+	for _, key := range t.RequiredEnv {
+		if strings.TrimSpace(settings.EnvVars[key]) == "" {
+			return fmt.Errorf("missing required environment variable %q", key)
+		}
+	}
+
+	for _, target := range t.RequiredMounts {
+		found := false
+		for _, mount := range settings.Mounts {
+			if mount.Target != target {
+				continue
+			}
+			if mount.Type == docker.AccessoryMountBind && mount.Source != "" && !strings.HasPrefix(mount.Source, "/path/to/") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("missing required bind mount for %q", target)
+		}
+	}
+
+	return nil
 }

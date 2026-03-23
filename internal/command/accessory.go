@@ -119,9 +119,13 @@ func (d *accessoryDeployCommand) run(ctx context.Context, ns *docker.Namespace, 
 		return fmt.Errorf("accessory name is required")
 	}
 
+	var selectedTemplate accessorytemplates.Template
 	if template, ok := accessorytemplates.ByAlias(d.template); ok {
+		selectedTemplate = template
 		settings = template.Settings
 		settings.Name = d.name
+	} else if d.template != "" {
+		return fmt.Errorf("unknown template %q", d.template)
 	}
 
 	if d.appName != "" {
@@ -170,14 +174,14 @@ func (d *accessoryDeployCommand) run(ctx context.Context, ns *docker.Namespace, 
 		if err != nil {
 			return err
 		}
-		settings.Mounts = append(settings.Mounts, mount)
+		settings.Mounts = docker.MergeAccessoryMounts(settings.Mounts, []docker.AccessoryMount{mount})
 	}
 	for _, item := range d.binds {
 		mount, err := docker.ParseAccessoryBindMount(item)
 		if err != nil {
 			return err
 		}
-		settings.Mounts = append(settings.Mounts, mount)
+		settings.Mounts = docker.MergeAccessoryMounts(settings.Mounts, []docker.AccessoryMount{mount})
 	}
 
 	for _, item := range d.publishes {
@@ -207,6 +211,9 @@ func (d *accessoryDeployCommand) run(ctx context.Context, ns *docker.Namespace, 
 			Type:    docker.AccessoryHealthCheckExec,
 			Command: append([]string(nil), d.healthCmd...),
 		}
+	}
+	if err := selectedTemplate.Validate(settings); err != nil {
+		return err
 	}
 
 	accessory := docker.NewAccessory(ns, settings)

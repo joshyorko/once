@@ -58,4 +58,25 @@ func TestDeployArgs(t *testing.T) {
 			"--tls",
 		}, args)
 	})
+
+	t.Run("with force and health check", func(t *testing.T) {
+		args := proxy.deployArgs(DeployOptions{
+			ServiceName:     "metrics",
+			Target:          "localhost:9090",
+			Host:            "metrics.example.com",
+			Force:           true,
+			HealthCheckPath: "/-/healthy",
+			HealthCheckPort: 9090,
+		})
+
+		assert.Equal(t, []string{
+			"kamal-proxy", "deploy", "metrics",
+			"--target", "localhost:9090",
+			"--deploy-timeout", "120s",
+			"--host", "metrics.example.com",
+			"--force",
+			"--health-check-path", "/-/healthy",
+			"--health-check-port", "9090",
+		}, args)
+	})
 }

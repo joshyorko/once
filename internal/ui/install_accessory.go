@@ -278,7 +278,7 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 		if err != nil {
 			return func() tea.Msg { return installAccessoryFormErrorMsg{err: fmt.Errorf("parsing bind mounts: %w", err)} }
 		}
-		m.settings.Mounts = append(volumes, binds...)
+		m.settings.Mounts = docker.MergeAccessoryMounts(m.settings.Mounts, append(volumes, binds...))
 
 		ports, err := parseAccessoryPortField(f.TextField(6).Value())
 		if err != nil {
@@ -307,6 +307,9 @@ func (m InstallAccessory) deployAccessory() (InstallAccessory, tea.Cmd) {
 	m.state = installAccessoryStateActivity
 	m.progress = NewProgress(m.width, Colors.Border)
 	return m, tea.Batch(m.progress.Init(), func() tea.Msg {
+		if err := m.template.Validate(m.settings); err != nil {
+			return installAccessoryFinishedMsg{err: err}
+		}
 		accessory := docker.NewAccessory(m.namespace, m.settings)
 		err := accessory.Deploy(context.Background(), nil)
 		return installAccessoryFinishedMsg{err: err}

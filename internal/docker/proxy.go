@@ -57,10 +57,14 @@ func (s ProxySettings) Marshal() string {
 }
 
 type DeployOptions struct {
-	ServiceName string
-	Target      string
-	Host        string
-	TLS         bool
+	ServiceName     string
+	Target          string
+	Host            string
+	TLS             bool
+	Force           bool
+	HealthCheckHost string
+	HealthCheckPath string
+	HealthCheckPort int
 }
 
 type Proxy struct {
@@ -276,6 +280,18 @@ func (p *Proxy) deployArgs(opts DeployOptions) []string {
 	if opts.TLS {
 		args = append(args, "--tls")
 	}
+	if opts.Force {
+		args = append(args, "--force")
+	}
+	if opts.HealthCheckHost != "" {
+		args = append(args, "--health-check-host", opts.HealthCheckHost)
+	}
+	if opts.HealthCheckPath != "" {
+		args = append(args, "--health-check-path", opts.HealthCheckPath)
+	}
+	if opts.HealthCheckPort != 0 {
+		args = append(args, "--health-check-port", fmt.Sprintf("%d", opts.HealthCheckPort))
+	}
 
 	return args
 }
@@ -383,10 +399,13 @@ func (p *Proxy) reRegisterRoutes(ctx context.Context) error {
 			target += fmt.Sprintf(":%d", port)
 		}
 		if err := p.Deploy(ctx, DeployOptions{
-			ServiceName: accessory.Settings.Name,
-			Target:      target,
-			Host:        accessory.Settings.Proxy.Host,
-			TLS:         !accessory.Settings.Proxy.DisableTLS,
+			ServiceName:     accessory.Settings.Name,
+			Target:          target,
+			Host:            accessory.Settings.Proxy.Host,
+			TLS:             !accessory.Settings.Proxy.DisableTLS,
+			Force:           accessory.Settings.HealthCheck.Type != AccessoryHealthCheckHTTP,
+			HealthCheckPath: accessoryHTTPHealthPath(accessory.Settings),
+			HealthCheckPort: accessoryHTTPHealthPort(accessory.Settings),
 		}); err != nil {
 			errs = append(errs, err)
 		}
@@ -419,4 +438,24 @@ func serviceTarget(ctx context.Context, c *client.Client, containerNameFn func(c
 		return "", fmt.Errorf("inspecting container %s: %w", name, err)
 	}
 	return info.ID[:12], nil
+}
+
+func accessoryHTTPHealthPath(settings AccessorySettings) string {
+	if settings.HealthCheck.Type != AccessoryHealthCheckHTTP {
+		return ""
+	}
+	if settings.HealthCheck.Path != "" {
+		return settings.HealthCheck.Path
+	}
+	return "/"
+}
+
+func accessoryHTTPHealthPort(settings AccessorySettings) int {
+	if settings.HealthCheck.Type != AccessoryHealthCheckHTTP {
+		return 0
+	}
+	if settings.HealthCheck.Port != 0 {
+		return settings.HealthCheck.Port
+	}
+	return settings.Proxy.TargetPort
 }
