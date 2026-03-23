@@ -120,6 +120,9 @@ func (m InstallAccessory) Update(msg tea.Msg) (Component, tea.Cmd) {
 		if len(m.settings.EnvVars) > 0 || len(m.template.RequiredEnv) > 0 {
 			m.state = installAccessoryStateEnvironment
 			m.env = NewAccessoryEnvironment(m.settings.EnvVars, m.template.RequiredEnv)
+			if m.width > 0 {
+				m.env, _ = m.env.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+			}
 			return m, m.env.Init()
 		}
 		m, cmd := m.deployAccessory()
@@ -213,6 +216,9 @@ func (m InstallAccessory) handleTemplateSelect(index AccessoryTemplateIndex) (In
 	f := m.templateForm(index)
 	m.form = f
 	m.state = installAccessoryStateForm
+	if m.width > 0 {
+		m.form, _ = m.form.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	}
 	return m, m.form.Init()
 }
 
