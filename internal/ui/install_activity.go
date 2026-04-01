@@ -242,12 +242,7 @@ func runApplicationInstall(
 		return nil, fmt.Errorf("%w: %w", docker.ErrDeployFailed, err)
 	}
 
-	progress(docker.DeployProgress{Stage: docker.DeployStageFinished})
-
-	if err := app.VerifyHTTP(ctx); err != nil {
-		if cleanupErr := app.Remove(context.Background(), true); cleanupErr != nil {
-			slog.Error("Failed to clean up after verification failure", "app", appName, "error", cleanupErr)
-		}
+	if err := app.VerifyHTTPOrRemove(ctx); err != nil {
 		return nil, err
 	}
 

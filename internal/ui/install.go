@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -200,7 +201,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, nil
 
 	case InstallFormSubmitMsg:
-		if m.namespace != nil && m.namespace.HostInUse(msg.Hostname) {
+		if m.namespace.HostInUse(msg.Hostname) {
 			m.err = docker.ErrHostnameInUse
 			return m, nil
 		}
@@ -210,6 +211,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		return m, m.activity.Init()
 
 	case InstallActivityFailedMsg:
+		_ = m.namespace.Refresh(context.Background())
 		m.activity = nil
 		m.err = msg.Err
 		if errors.Is(msg.Err, docker.ErrPullFailed) {
@@ -217,6 +219,7 @@ func (m Install) Update(msg tea.Msg) (Component, tea.Cmd) {
 		} else {
 			m.state = installStateHostname
 		}
+
 		return m, nil
 
 	case InstallActivityDoneMsg:
@@ -350,7 +353,7 @@ func (m Install) imageErrorState() installState {
 }
 
 func (m Install) showLogo() bool {
-	return m.namespace == nil || len(m.namespace.Applications()) == 0
+	return len(m.namespace.Applications()) == 0
 }
 
 func (m Install) middleHeight() int {

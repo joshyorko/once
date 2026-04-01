@@ -634,6 +634,36 @@ func TestRemoveApplication(t *testing.T) {
 	assert.NoError(t, err, "volume should still exist")
 }
 
+func TestVerifyHTTPOrRemoveAllowsRedeployWithSameHost(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ns, err := docker.NewNamespace("once-verify-redeploy-test")
+	require.NoError(t, err)
+	defer ns.Teardown(ctx, true)
+
+	require.NoError(t, ns.EnsureNetwork(ctx))
+	require.NoError(t, ns.Proxy().Boot(ctx, getProxyPorts(t)))
+
+	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
+		Name:  "first",
+		Image: "ghcr.io/basecamp/once-campfire:main",
+		Host:  "reuse.invalid",
+	})
+
+	err = app.VerifyHTTPOrRemove(ctx)
+	require.ErrorIs(t, err, docker.ErrVerificationFailed)
+
+	require.NoError(t, ns.Refresh(ctx))
+	assert.False(t, ns.HostInUse("reuse.invalid"))
+
+	deployApp(t, ctx, ns, docker.ApplicationSettings{
+		Name:  "second",
+		Image: "ghcr.io/basecamp/once-campfire:main",
+		Host:  "reuse.invalid",
+	})
+}
+
 func TestRemoveApplicationWithData(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1061,4 +1091,3 @@ func buildAndPushImage(t *testing.T, ctx context.Context, tag, version string) {
 	io.Copy(io.Discard, pushResp)
 	pushResp.Close()
 }
-
