@@ -22,7 +22,7 @@ func TestVerifyHTTP_Success(t *testing.T) {
 		Settings: ApplicationSettings{Host: server.Listener.Addr().String(), DisableTLS: true},
 	}
 
-	err := app.VerifyHTTP(context.Background())
+	err := app.verifyHTTP(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, HealthCheckPath, requestPath)
 }
@@ -41,7 +41,7 @@ func TestVerifyHTTP_RedirectToSuccess(t *testing.T) {
 		Settings: ApplicationSettings{Host: server.Listener.Addr().String(), DisableTLS: true},
 	}
 
-	err := app.VerifyHTTP(context.Background())
+	err := app.verifyHTTP(context.Background())
 	assert.NoError(t, err)
 }
 
@@ -55,7 +55,7 @@ func TestVerifyHTTP_ServerError(t *testing.T) {
 		Settings: ApplicationSettings{Host: server.Listener.Addr().String(), DisableTLS: true},
 	}
 
-	err := app.VerifyHTTP(context.Background())
+	err := app.verifyHTTP(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrVerificationFailed)
 	assert.Contains(t, err.Error(), "unexpected status 500")
@@ -66,7 +66,7 @@ func TestVerifyHTTP_Unreachable(t *testing.T) {
 		Settings: ApplicationSettings{Host: "127.0.0.1:1", DisableTLS: true},
 	}
 
-	err := app.VerifyHTTP(context.Background())
+	err := app.verifyHTTP(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrVerificationFailed)
 }
@@ -76,7 +76,7 @@ func TestVerifyHTTP_NoHost(t *testing.T) {
 		Settings: ApplicationSettings{},
 	}
 
-	err := app.VerifyHTTP(context.Background())
+	err := app.verifyHTTP(context.Background())
 	assert.NoError(t, err)
 }
 

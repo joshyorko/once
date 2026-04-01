@@ -31,7 +31,7 @@ var (
 	ErrDeployFailed       = errors.New("deploy failed")
 	ErrVerificationFailed = &describedError{
 		msg:         "verification failed",
-		description: "The application did not respond to a health check after starting. It may have crashed or need longer to start up.",
+		description: "The application couldn't be verified. Please check that you have a valid DNS record set up.",
 	}
 	ErrUnpauseFailed = errors.New("failed to unpause container after backup")
 )
@@ -194,7 +194,7 @@ func (a *Application) Update(ctx context.Context, progress DeployProgressCallbac
 
 	err = a.deployWithVolume(ctx, vol, progress)
 	if err == nil {
-		if verifyErr := a.VerifyHTTP(ctx); verifyErr != nil {
+		if verifyErr := a.verifyHTTP(ctx); verifyErr != nil {
 			err = verifyErr
 		}
 	}
@@ -222,32 +222,15 @@ func (a *Application) Deploy(ctx context.Context, progress DeployProgressCallbac
 	if err := a.deployWithVolume(ctx, vol, progress); err != nil {
 		return err
 	}
-	if err := a.VerifyHTTP(ctx); err != nil {
-		return err
-	}
 	return a.reconcileAccessories(ctx, progress)
 }
 
-func (a *Application) VerifyHTTP(ctx context.Context) error {
-	url := a.URL()
-	if url == "" {
-		return nil
-	}
-
-	client := &http.Client{Timeout: httpVerifyTimeout}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("%w: unexpected status %d from %s", ErrVerificationFailed, resp.StatusCode, url)
+func (a *Application) VerifyHTTPOrRemove(ctx context.Context) error {
+	if err := a.verifyHTTP(ctx); err != nil {
+		if cleanupErr := a.Remove(context.Background(), true); cleanupErr != nil {
+			slog.Error("Failed to clean up after verification failure", "app", a.Settings.Name, "error", cleanupErr)
+		}
+		return err
 	}
 
 	return nil
@@ -321,7 +304,8 @@ func (a *Application) saveOperationResult(ctx context.Context, record func(*Stat
 }
 
 func (a *Application) pullImage(ctx context.Context, progress DeployProgressCallback) (bool, error) {
-	reader, err := a.namespace.client.ImagePull(ctx, a.Settings.Image, image.PullOptions{})
+	opts := image.PullOptions{RegistryAuth: registryAuthFor(a.Settings.Image)}
+	reader, err := a.namespace.client.ImagePull(ctx, a.Settings.Image, opts)
 	if err != nil {
 		return false, fmt.Errorf("%w: %w", ErrPullFailed, err)
 	}
@@ -439,6 +423,31 @@ func (a *Application) reconcileAccessories(ctx context.Context, progress DeployP
 	return errors.Join(errs...)
 }
 
+func (a *Application) verifyHTTP(ctx context.Context) error {
+	url := a.URL()
+	if url == "" {
+		return nil
+	}
+
+	client := &http.Client{Timeout: httpVerifyTimeout}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+HealthCheckPath, nil)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrVerificationFailed, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return fmt.Errorf("%w: unexpected status %d from %s", ErrVerificationFailed, resp.StatusCode, url)
+	}
+
+	return nil
+}
+
 func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 	var mounts []mount.Mount
 	for _, target := range AppVolumeMountTargets {
@@ -449,16 +458,6 @@ func (a *Application) volumeMounts(vol *ApplicationVolume) []mount.Mount {
 		})
 	}
 	return mounts
-}
-
-func (a *Application) containerConfig(env []string) *container.Config {
-	return &container.Config{
-		Image: a.Settings.Image,
-		Labels: map[string]string{
-			labelKey: a.Settings.Marshal(),
-		},
-		Env: env,
-	}
 }
 
 func (a *Application) removeContainersExcept(ctx context.Context, keep string) error {
@@ -480,4 +479,14 @@ func (a *Application) removeContainersExcept(ctx context.Context, keep string) e
 	}
 
 	return nil
+}
+
+func (a *Application) containerConfig(env []string) *container.Config {
+	return &container.Config{
+		Image: a.Settings.Image,
+		Labels: map[string]string{
+			labelKey: a.Settings.Marshal(),
+		},
+		Env: env,
+	}
 }

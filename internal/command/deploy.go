@@ -80,10 +80,7 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 	}
 
 	fmt.Println("Verifying...")
-	if err := app.VerifyHTTP(ctx); err != nil {
-		if cleanupErr := cleanupFailedDeploy(app); cleanupErr != nil {
-			slog.Error("Failed to clean up after verification failure", "app", name, "error", cleanupErr)
-		}
+	if err := app.VerifyHTTPOrRemove(ctx); err != nil {
 		return err
 	}
 

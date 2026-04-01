@@ -14,7 +14,7 @@ import (
 // colors (FocusOrange, BackgroundTint, LightText) are true-color RGB.
 type Palette struct {
 	// ANSI 16 — always BasicColor values for rendering
-	Black, Red, Green, Yellow, Blue, Magenta, Cyan, White                                                  color.Color
+	Black, Red, Green, Yellow, Blue, Magenta, Cyan, White                                                 color.Color
 	BrightBlack, BrightRed, BrightGreen, BrightYellow, BrightBlue, BrightMagenta, BrightCyan, BrightWhite color.Color
 
 	// Synthesized (always true-color RGB)
@@ -61,23 +61,23 @@ func (p *Palette) HealthColor(h HealthState) color.Color {
 // fallback-derived synthesized colors. This is the package-init value.
 func DefaultPalette() *Palette {
 	p := &Palette{
-		Black:        lipgloss.Black,
-		Red:          lipgloss.Red,
-		Green:        lipgloss.Green,
-		Yellow:       lipgloss.Yellow,
-		Blue:         lipgloss.Blue,
-		Magenta:      lipgloss.Magenta,
-		Cyan:         lipgloss.Cyan,
-		White:        lipgloss.White,
-		BrightBlack:  lipgloss.BrightBlack,
-		BrightRed:    lipgloss.BrightRed,
-		BrightGreen:  lipgloss.BrightGreen,
-		BrightYellow: lipgloss.BrightYellow,
-		BrightBlue:   lipgloss.BrightBlue,
+		Black:         lipgloss.Black,
+		Red:           lipgloss.Red,
+		Green:         lipgloss.Green,
+		Yellow:        lipgloss.Yellow,
+		Blue:          lipgloss.Blue,
+		Magenta:       lipgloss.Magenta,
+		Cyan:          lipgloss.Cyan,
+		White:         lipgloss.White,
+		BrightBlack:   lipgloss.BrightBlack,
+		BrightRed:     lipgloss.BrightRed,
+		BrightGreen:   lipgloss.BrightGreen,
+		BrightYellow:  lipgloss.BrightYellow,
+		BrightBlue:    lipgloss.BrightBlue,
 		BrightMagenta: lipgloss.BrightMagenta,
-		BrightCyan:   lipgloss.BrightCyan,
-		BrightWhite:  lipgloss.BrightWhite,
-		isDark:       true,
+		BrightCyan:    lipgloss.BrightCyan,
+		BrightWhite:   lipgloss.BrightWhite,
+		isDark:        true,
 	}
 
 	p.samples = defaultSamples()
