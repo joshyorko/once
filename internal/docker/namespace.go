@@ -157,11 +157,18 @@ func (n *Namespace) AccessoriesForApp(appName string) []*Accessory {
 	return accessories
 }
 
-func (n *Namespace) HostInUse(host string) bool {
+func (n *Namespace) ApplicationByHost(host string) *Application {
 	for _, app := range n.applications {
 		if app.Settings.Host == host {
-			return true
+			return app
 		}
+	}
+	return nil
+}
+
+func (n *Namespace) HostInUse(host string) bool {
+	if n.ApplicationByHost(host) != nil {
+		return true
 	}
 	for _, accessory := range n.accessories {
 		if accessory.Settings.Proxy.Enabled && accessory.Settings.Proxy.Host == host {

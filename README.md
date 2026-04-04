@@ -23,6 +23,14 @@ curl https://get.once.com | sh
 This will download the appropriate binary for your platform, install it and its corresponding background service, and then launch it so you can do your first application install.
 If the machine you're running this from doesn't already have Docker, it will install that too (on supported platforms).
 
+### Customizing the installer behaviour
+
+If you want to install `once` without launching it (for example, for a scripted install), you can use `ONCE_INTERACTIVE=false`:
+
+```sh
+curl https://get.once.com | ONCE_INTERACTIVE=false sh
+```
+
 ### Installing manually
 
 If you prefer to set ONCE up yourself, you can download the appropriate binary from the GitHub Releases page.
@@ -116,6 +124,14 @@ once accessory deploy \
 
 The built-in `prometheus` and `alertmanager` templates are scaffolds only. They provide the image, command, and mount placeholders, but they do not generate config files for you.
 
+### Customizing the `once` appearance
+
+On first run, `once` shows an animated logo and background.
+If you find this distracting, or it causes problems in your environment, you can suppress it with `ONCE_REDUCED_MOTION=true`:
+
+```sh
+ONCE_REDUCED_MOTION=true once
+```
 ## Making a ONCE-compatible application
 
 Fundamentally, ONCE works with any web application that:

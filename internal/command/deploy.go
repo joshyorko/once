@@ -11,9 +11,8 @@ import (
 )
 
 type deployCommand struct {
-	cmd        *cobra.Command
-	host       string
-	disableTLS bool
+	cmd   *cobra.Command
+	flags settingsFlags
 }
 
 func newDeployCommand() *deployCommand {
@@ -24,8 +23,8 @@ func newDeployCommand() *deployCommand {
 		Args:  cobra.ExactArgs(1),
 		RunE:  WithNamespace(d.run),
 	}
-	d.cmd.Flags().StringVar(&d.host, "host", "", "hostname for the application (defaults to <name>.localhost)")
-	d.cmd.Flags().BoolVar(&d.disableTLS, "disable-tls", false, "disable TLS for the application")
+
+	d.flags.register(d.cmd)
 	return d
 }
 
@@ -38,59 +37,41 @@ func (d *deployCommand) run(ctx context.Context, ns *docker.Namespace, cmd *cobr
 		return fmt.Errorf("%w: %w", docker.ErrSetupFailed, err)
 	}
 
-	baseName := docker.NameFromImageRef(imageRef)
-	name, err := ns.UniqueName(baseName)
-	if err != nil {
-		return fmt.Errorf("generating app name: %w", err)
-	}
-
-	host := d.host
+	host := d.flags.host
 	if host == "" {
-		host = baseName + ".localhost"
+		host = docker.NameFromImageRef(imageRef) + ".localhost"
 	}
 
 	if ns.HostInUse(host) {
 		return docker.ErrHostnameInUse
 	}
 
-	app := docker.NewApplication(ns, docker.ApplicationSettings{
-		Name:       name,
-		Image:      imageRef,
-		Host:       host,
-		DisableTLS: d.disableTLS,
-		AutoUpdate: true,
+	settings, err := d.flags.buildSettings(imageRef, host)
+	if err != nil {
+		return err
+	}
+
+	baseName := docker.NameFromImageRef(imageRef)
+	name, err := ns.UniqueName(baseName)
+	if err != nil {
+		return fmt.Errorf("generating app name: %w", err)
+	}
+	settings.Name = name
+
+	app := docker.NewApplication(ns, settings)
+
+	return runWithProgress("Deploying "+host, func(progress docker.DeployProgressCallback) error {
+		if err := app.Deploy(ctx, progress); err != nil {
+			if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
+				slog.Error("Failed to clean up after deploy failure", "app", name, "error", cleanupErr)
+			}
+			return fmt.Errorf("%w: %w", docker.ErrDeployFailed, err)
+		}
+
+		if err := app.VerifyHTTPOrRemove(ctx); err != nil {
+			return err
+		}
+
+		return nil
 	})
-
-	progress := func(p docker.DeployProgress) {
-		switch p.Stage {
-		case docker.DeployStageDownloading:
-			fmt.Printf("Downloading: %d%%\n", p.Percentage)
-		case docker.DeployStageStarting:
-			fmt.Println("Starting...")
-		case docker.DeployStageFinished:
-			fmt.Println("Finished")
-		}
-	}
-
-	if err := app.Deploy(ctx, progress); err != nil {
-		if cleanupErr := cleanupFailedDeploy(app); cleanupErr != nil {
-			slog.Error("Failed to clean up after deploy failure", "app", name, "error", cleanupErr)
-		}
-		return fmt.Errorf("%w: %w", docker.ErrDeployFailed, err)
-	}
-
-	fmt.Println("Verifying...")
-	if err := app.VerifyHTTPOrRemove(ctx); err != nil {
-		return err
-	}
-
-	fmt.Printf("Deployed %s\n", name)
-	return nil
-}
-
-func cleanupFailedDeploy(app *docker.Application) error {
-	if err := app.Remove(context.Background(), true); err != nil {
-		return err
-	}
-	return nil
 }

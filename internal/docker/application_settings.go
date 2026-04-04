@@ -59,6 +59,16 @@ func (s ApplicationSettings) Marshal() string {
 	return string(b)
 }
 
+func (s ApplicationSettings) Validate() error {
+	if s.Image == "" {
+		return ErrImageRequired
+	}
+	if s.Backup.AutoBackup && s.Backup.Path == "" {
+		return ErrAutoBackupWithoutPath
+	}
+	return nil
+}
+
 func (s ApplicationSettings) TLSEnabled() bool {
 	return s.Host != "" && !s.DisableTLS && !IsLocalhost(s.Host)
 }

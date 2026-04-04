@@ -18,13 +18,15 @@ import (
 )
 
 var (
-	ErrApplicationExists  = errors.New("application already exists")
-	ErrHostnameInUse      = errors.New("hostname already in use")
-	ErrHostRequired       = errors.New("host is required")
-	ErrInvalidBackup      = errors.New("invalid backup archive")
-	ErrBackupPathRelative = errors.New("backup path must be absolute")
-	ErrSetupFailed        = errors.New("setup failed")
-	ErrPullFailed         = &describedError{
+	ErrApplicationExists     = errors.New("application already exists")
+	ErrHostnameInUse         = errors.New("hostname already in use")
+	ErrHostRequired          = errors.New("host is required")
+	ErrInvalidBackup         = errors.New("invalid backup archive")
+	ErrImageRequired         = errors.New("image is required")
+	ErrBackupPathRelative    = errors.New("backup path must be absolute")
+	ErrAutoBackupWithoutPath = errors.New("auto-backup requires a backup path")
+	ErrSetupFailed           = errors.New("setup failed")
+	ErrPullFailed            = &describedError{
 		msg:         "pull failed",
 		description: "Failed to download the application image. Check that the image name is correct and try again.",
 	}

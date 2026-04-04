@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -353,7 +354,7 @@ func (m Install) imageErrorState() installState {
 }
 
 func (m Install) showLogo() bool {
-	return len(m.namespace.Applications()) == 0
+	return len(m.namespace.Applications()) == 0 && os.Getenv("ONCE_REDUCED_MOTION") != "true"
 }
 
 func (m Install) middleHeight() int {
