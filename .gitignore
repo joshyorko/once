@@ -2,3 +2,4 @@
 /dist
 developer/tmp/
 coverage.out
+.env

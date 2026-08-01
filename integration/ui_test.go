@@ -17,6 +17,8 @@ import (
 )
 
 func TestUIInstallAndManageApp(t *testing.T) {
+	t.Setenv("ONCE_REDUCED_MOTION", "true")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -35,6 +37,7 @@ func TestUIInstallAndManageApp(t *testing.T) {
 	d.send(tea.WindowSizeMsg{Width: 120, Height: 40})
 
 	// -- Screen 1: App list → select "Custom Docker image" --
+	d.send(keyMsg("up"))
 	d.send(keyMsg("up"))
 	d.send(keyMsg("enter"))
 
