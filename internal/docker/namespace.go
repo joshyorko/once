@@ -1,9 +1,6 @@
 package docker
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -156,7 +153,6 @@ func (n *Namespace) AccessoriesForApp(appName string) []*Accessory {
 	}
 	return accessories
 }
-
 func (n *Namespace) ApplicationByHost(host string) *Application {
 	for _, app := range n.applications {
 		if app.Settings.Host == host {
@@ -299,8 +295,8 @@ func (n *Namespace) SaveState(ctx context.Context, state *State) error {
 	return n.proxy.SaveState(ctx, state)
 }
 
-func (n *Namespace) Restore(ctx context.Context, r io.Reader) (*Application, error) {
-	appSettings, volSettings, volumeData, err := n.parseBackup(r)
+func (n *Namespace) Restore(ctx context.Context, r io.ReadSeeker) (*Application, error) {
+	appSettings, volSettings, err := readBackupSettings(r)
 	if err != nil {
 		return nil, fmt.Errorf("parsing backup: %w", err)
 	}
@@ -315,8 +311,12 @@ func (n *Namespace) Restore(ctx context.Context, r io.Reader) (*Application, err
 	}
 	appSettings.Name = name
 
+	if _, err := r.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("rewinding backup: %w", err)
+	}
+
 	app := NewApplication(n, appSettings)
-	if err := app.Restore(ctx, volSettings, volumeData); err != nil {
+	if err := app.Restore(ctx, volSettings, r); err != nil {
 		if cleanupErr := app.Destroy(context.Background(), true); cleanupErr != nil {
 			slog.Error("Failed to clean up after restore failure", "app", appSettings.Name, "error", cleanupErr)
 		}
@@ -502,83 +502,6 @@ func (n *Namespace) accessoryVolumePrefix(accessoryName string) string {
 
 func (n *Namespace) accessoryVolumeName(accessoryName, mountName string) string {
 	return fmt.Sprintf("%s-accessory-%s-%s", n.name, accessoryName, mountName)
-}
-
-func (n *Namespace) parseBackup(r io.Reader) (ApplicationSettings, ApplicationVolumeSettings, []byte, error) {
-	var appSettings ApplicationSettings
-	var volSettings ApplicationVolumeSettings
-	var volumeData bytes.Buffer
-
-	gr, err := gzip.NewReader(r)
-	if err != nil {
-		return appSettings, volSettings, nil, fmt.Errorf("%w: %v", ErrInvalidBackup, err)
-	}
-	defer gr.Close()
-
-	tr := tar.NewReader(gr)
-	tw := tar.NewWriter(&volumeData)
-	defer tw.Close()
-
-	foundApp := false
-	foundVol := false
-
-	for {
-		header, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return appSettings, volSettings, nil, fmt.Errorf("%w: %v", ErrInvalidBackup, err)
-		}
-
-		switch header.Name {
-		case backupAppSettingsEntry:
-			data, err := io.ReadAll(tr)
-			if err != nil {
-				return appSettings, volSettings, nil, fmt.Errorf("%w: reading application settings: %v", ErrInvalidBackup, err)
-			}
-			appSettings, err = UnmarshalApplicationSettings(string(data))
-			if err != nil {
-				return appSettings, volSettings, nil, fmt.Errorf("%w: parsing application settings: %v", ErrInvalidBackup, err)
-			}
-			foundApp = true
-
-		case backupVolSettingsEntry:
-			data, err := io.ReadAll(tr)
-			if err != nil {
-				return appSettings, volSettings, nil, fmt.Errorf("%w: reading volume settings: %v", ErrInvalidBackup, err)
-			}
-			volSettings, err = UnmarshalApplicationVolumeSettings(string(data))
-			if err != nil {
-				return appSettings, volSettings, nil, fmt.Errorf("%w: parsing volume settings: %v", ErrInvalidBackup, err)
-			}
-			foundVol = true
-
-		default:
-			if header.Name == BackupDataDir || strings.HasPrefix(header.Name, BackupDataDir+"/") {
-				newHeader := *header
-				if header.Name == BackupDataDir {
-					newHeader.Name = "data"
-				} else {
-					newHeader.Name = "data" + strings.TrimPrefix(header.Name, BackupDataDir)
-				}
-				if err := tw.WriteHeader(&newHeader); err != nil {
-					return appSettings, volSettings, nil, err
-				}
-				if header.Size > 0 {
-					if _, err := io.Copy(tw, tr); err != nil {
-						return appSettings, volSettings, nil, err
-					}
-				}
-			}
-		}
-	}
-
-	if !foundApp || !foundVol {
-		return appSettings, volSettings, nil, fmt.Errorf("%w: missing required metadata files", ErrInvalidBackup)
-	}
-
-	return appSettings, volSettings, volumeData.Bytes(), nil
 }
 
 // Helpers

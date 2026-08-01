@@ -142,26 +142,23 @@ func TestCopyTarEntriesWithPrefix(t *testing.T) {
 	assert.Equal(t, "data/file.txt", header.Name)
 }
 
-func TestWriteTarEntryAndCopyRoundTrip(t *testing.T) {
+func TestReadBackupSettings(t *testing.T) {
 	// Build a complete backup-like tar
 	var backupBuf bytes.Buffer
 	gw := gzip.NewWriter(&backupBuf)
 	tw := tar.NewWriter(gw)
 
+	require.NoError(t, writeTarEntry(tw, "data/file.txt", []byte("file content")))
 	require.NoError(t, writeTarEntry(tw, backupAppSettingsEntry, []byte(`{"name":"app"}`)))
 	require.NoError(t, writeTarEntry(tw, backupVolSettingsEntry, []byte(`{"secretKeyBase":"secret","vapidPublicKey":"pub123","vapidPrivateKey":"priv456"}`)))
-	require.NoError(t, writeTarEntry(tw, "data/file.txt", []byte("file content")))
 
 	require.NoError(t, tw.Close())
 	require.NoError(t, gw.Close())
 
-	// Parse the backup
-	ns := &Namespace{name: "test"}
-	appSettings, volSettings, volumeData, err := ns.parseBackup(&backupBuf)
+	appSettings, volSettings, err := readBackupSettings(&backupBuf)
 	require.NoError(t, err)
 	assert.Equal(t, "app", appSettings.Name)
 	assert.Equal(t, "secret", volSettings.SecretKeyBase)
 	assert.Equal(t, "pub123", volSettings.VAPIDPublicKey)
 	assert.Equal(t, "priv456", volSettings.VAPIDPrivateKey)
-	assert.NotEmpty(t, volumeData)
 }

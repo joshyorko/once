@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/errdefs"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/mount"
@@ -23,6 +24,7 @@ var (
 	ErrHostRequired          = errors.New("host is required")
 	ErrInvalidBackup         = errors.New("invalid backup archive")
 	ErrImageRequired         = errors.New("image is required")
+	ErrApplicationNotRunning = errors.New("the application is not running")
 	ErrBackupPathRelative    = errors.New("backup path must be absolute")
 	ErrAutoBackupWithoutPath = errors.New("auto-backup requires a backup path")
 	ErrSetupFailed           = errors.New("setup failed")
@@ -173,6 +175,22 @@ func (a *Application) Start(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (a *Application) Exec(ctx context.Context, cmd []string) error {
+	name, err := a.ContainerName(ctx)
+	if err != nil {
+		return err
+	}
+
+	if err := execAttachedInContainer(ctx, a.namespace.client, name, cmd); err != nil {
+		if errdefs.IsConflict(err) {
+			return ErrApplicationNotRunning
+		}
+		return err
+	}
+
+	return nil
 }
 
 func (a *Application) Update(ctx context.Context, progress DeployProgressCallback) (bool, error) {

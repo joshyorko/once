@@ -2,7 +2,6 @@ package docker
 
 import (
 	"archive/tar"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -111,7 +110,7 @@ func (a *Application) TrimBackups() error {
 	return errors.Join(errs...)
 }
 
-func (a *Application) Restore(ctx context.Context, volSettings ApplicationVolumeSettings, volumeData []byte) (returnErr error) {
+func (a *Application) Restore(ctx context.Context, volSettings ApplicationVolumeSettings, backup io.Reader) (returnErr error) {
 	slog.Info("Restoring application", "app", a.Settings.Name)
 
 	defer func() {
@@ -131,7 +130,7 @@ func (a *Application) Restore(ctx context.Context, volSettings ApplicationVolume
 		return fmt.Errorf("creating volume: %w", err)
 	}
 
-	if err := a.populateVolume(ctx, vol, volumeData); err != nil {
+	if err := a.populateVolume(ctx, vol, backup); err != nil {
 		vol.Destroy(ctx)
 		return fmt.Errorf("populating volume: %w", err)
 	}
@@ -225,21 +224,19 @@ func (a *Application) copyVolumeData(ctx context.Context, containerName string, 
 	return nil
 }
 
-func (a *Application) populateVolume(ctx context.Context, vol *ApplicationVolume, data []byte) error {
+func (a *Application) populateVolume(ctx context.Context, vol *ApplicationVolume, backup io.Reader) error {
 	containerName := fmt.Sprintf("%s-restore-temp", a.namespace.name)
 
 	resp, err := a.namespace.client.ContainerCreate(ctx,
 		&container.Config{
-			Image:      a.Settings.Image,
-			Entrypoint: []string{},
-			Cmd:        []string{"sleep", "infinity"},
+			Image: a.Settings.Image,
 		},
 		&container.HostConfig{
 			Mounts: []mount.Mount{
 				{
 					Type:   mount.TypeVolume,
 					Source: vol.Name(),
-					Target: "/data",
+					Target: "/" + BackupDataDir,
 				},
 			},
 		},
@@ -257,14 +254,15 @@ func (a *Application) populateVolume(ctx context.Context, vol *ApplicationVolume
 		a.namespace.client.ContainerRemove(removeCtx, resp.ID, container.RemoveOptions{Force: true})
 	}()
 
-	if err := a.namespace.client.ContainerStart(ctx, resp.ID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("starting temp container: %w", err)
-	}
+	pr, pw := io.Pipe()
+	defer pr.Close()
+	go func() {
+		pw.CloseWithError(streamVolumeDataEntries(backup, pw))
+	}()
 
-	if len(data) > 0 {
-		if err := a.namespace.client.CopyToContainer(ctx, resp.ID, "/", bytes.NewReader(data), container.CopyToContainerOptions{}); err != nil {
-			return fmt.Errorf("copying data to volume: %w", err)
-		}
+	// Extracting at the root places the data/ entries in the volume mount.
+	if err := a.namespace.client.CopyToContainer(ctx, resp.ID, "/", pr, container.CopyToContainerOptions{}); err != nil {
+		return fmt.Errorf("copying data to volume: %w", err)
 	}
 
 	return nil
@@ -361,7 +359,80 @@ func writeTarEntry(tw *tar.Writer, name string, data []byte) error {
 	return err
 }
 
+func readBackupSettings(r io.Reader) (ApplicationSettings, ApplicationVolumeSettings, error) {
+	var appSettings ApplicationSettings
+	var volSettings ApplicationVolumeSettings
+
+	gr, err := gzip.NewReader(r)
+	if err != nil {
+		return appSettings, volSettings, fmt.Errorf("%w: %v", ErrInvalidBackup, err)
+	}
+	defer gr.Close()
+
+	tr := tar.NewReader(gr)
+	var appData, volData []byte
+
+	for appData == nil || volData == nil {
+		header, err := tr.Next()
+		if err == nil {
+			switch header.Name {
+			case backupAppSettingsEntry:
+				appData, err = io.ReadAll(tr)
+			case backupVolSettingsEntry:
+				volData, err = io.ReadAll(tr)
+			}
+		}
+
+		if errors.Is(err, io.EOF) {
+			return appSettings, volSettings, fmt.Errorf("%w: missing required metadata files", ErrInvalidBackup)
+		}
+		if err != nil {
+			return appSettings, volSettings, fmt.Errorf("%w: %v", ErrInvalidBackup, err)
+		}
+	}
+
+	appSettings, err = UnmarshalApplicationSettings(string(appData))
+	if err != nil {
+		return appSettings, volSettings, fmt.Errorf("%w: parsing application settings: %v", ErrInvalidBackup, err)
+	}
+
+	volSettings, err = UnmarshalApplicationVolumeSettings(string(volData))
+	if err != nil {
+		return appSettings, volSettings, fmt.Errorf("%w: parsing volume settings: %v", ErrInvalidBackup, err)
+	}
+
+	return appSettings, volSettings, nil
+}
+
+func streamVolumeDataEntries(backup io.Reader, w io.Writer) error {
+	gr, err := gzip.NewReader(backup)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidBackup, err)
+	}
+	defer gr.Close()
+
+	tw := tar.NewWriter(w)
+	err = copyTarEntries(gr, tw, func(header *tar.Header) bool {
+		return header.Name == BackupDataDir || strings.HasPrefix(header.Name, BackupDataDir+"/")
+	})
+	if err != nil {
+		return err
+	}
+	return tw.Close()
+}
+
 func copyTarEntriesWithPrefix(src io.Reader, dst *tar.Writer, oldPrefix, newPrefix string) error {
+	return copyTarEntries(src, dst, func(header *tar.Header) bool {
+		if header.Name == oldPrefix {
+			header.Name = newPrefix
+		} else if strings.HasPrefix(header.Name, oldPrefix+"/") {
+			header.Name = newPrefix + strings.TrimPrefix(header.Name, oldPrefix)
+		}
+		return true
+	})
+}
+
+func copyTarEntries(src io.Reader, dst *tar.Writer, keep func(*tar.Header) bool) error {
 	tr := tar.NewReader(src)
 	for {
 		header, err := tr.Next()
@@ -372,22 +443,15 @@ func copyTarEntriesWithPrefix(src io.Reader, dst *tar.Writer, oldPrefix, newPref
 			return err
 		}
 
-		if oldPrefix != "" && newPrefix != "" {
-			if header.Name == oldPrefix {
-				header.Name = newPrefix
-			} else if strings.HasPrefix(header.Name, oldPrefix+"/") {
-				header.Name = newPrefix + strings.TrimPrefix(header.Name, oldPrefix)
-			}
+		if !keep(header) {
+			continue
 		}
 
 		if err := dst.WriteHeader(header); err != nil {
 			return err
 		}
-
-		if header.Size > 0 {
-			if _, err := io.Copy(dst, tr); err != nil {
-				return err
-			}
+		if _, err := io.Copy(dst, tr); err != nil {
+			return err
 		}
 	}
 }

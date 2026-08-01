@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/basecamp/once/internal/command"
 	"github.com/basecamp/once/internal/docker"
 )
 
@@ -243,6 +244,56 @@ func TestStartStop(t *testing.T) {
 
 	require.NoError(t, app.Start(ctx))
 	assertContainerRunning(t, ctx, containerName, true)
+}
+
+func TestExec(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ns, err := docker.NewNamespace("once-exec-test")
+	require.NoError(t, err)
+	defer ns.Teardown(ctx, true)
+
+	require.NoError(t, ns.EnsureNetwork(ctx))
+	require.NoError(t, ns.Proxy().Boot(ctx, getProxyPorts(t)))
+
+	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
+		Name:  "exec",
+		Image: "ghcr.io/basecamp/once-campfire:main",
+		Host:  "exec.localhost",
+	})
+
+	require.NoError(t, app.Exec(ctx, []string{"sh", "-c", "exit 0"}))
+
+	err = app.Exec(ctx, []string{"sh", "-c", "exit 7"})
+	require.Error(t, err)
+	code, ok := command.ExitCode(err)
+	assert.True(t, ok)
+	assert.Equal(t, 7, code)
+}
+
+func TestExecFailsWhenNotRunning(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	ns, err := docker.NewNamespace("once-exec-stopped-test")
+	require.NoError(t, err)
+	defer ns.Teardown(ctx, true)
+
+	require.NoError(t, ns.EnsureNetwork(ctx))
+	require.NoError(t, ns.Proxy().Boot(ctx, getProxyPorts(t)))
+
+	app := deployApp(t, ctx, ns, docker.ApplicationSettings{
+		Name:  "exec-stopped",
+		Image: "ghcr.io/basecamp/once-campfire:main",
+		Host:  "exec-stopped.localhost",
+	})
+
+	require.NoError(t, app.Stop(ctx))
+	require.NoError(t, ns.Refresh(ctx))
+
+	err = ns.Application("exec-stopped").Exec(ctx, []string{"sh", "-c", "exit 0"})
+	assert.ErrorIs(t, err, docker.ErrApplicationNotRunning)
 }
 
 func TestLongAppName(t *testing.T) {

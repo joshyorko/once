@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,7 @@ func NewRootCommand() *RootCommand {
 	r.cmd.AddCommand(newBackupCommand().cmd)
 	r.cmd.AddCommand(newAccessoryCommand().cmd)
 	r.cmd.AddCommand(newDeployCommand().cmd)
+	r.cmd.AddCommand(newExecCommand().cmd)
 	r.cmd.AddCommand(newListCommand().cmd)
 	r.cmd.AddCommand(newProxyCommand().cmd)
 	r.cmd.AddCommand(newRemoveCommand().cmd)
@@ -92,4 +94,21 @@ func WithNamespace(fn NamespaceRunE) func(*cobra.Command, []string) error {
 func namespaceFlag(cmd *cobra.Command) string {
 	namespace, _ := cmd.Root().PersistentFlags().GetString("namespace")
 	return namespace
+}
+
+type exitCoder interface {
+	error
+	ExitCode() int
+}
+
+func ExitCode(err error) (int, bool) {
+	if e, ok := errors.AsType[exitCoder](err); ok {
+		return e.ExitCode(), true
+	}
+	return 0, false
+}
+
+func IsExitError(err error) bool {
+	_, ok := ExitCode(err)
+	return ok
 }
