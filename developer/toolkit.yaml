@@ -1,0 +1,31 @@
+tasks:
+  build:
+    shell: python call_invoke.py build
+  test:
+    shell: python call_invoke.py test
+  install:
+    shell: python call_invoke.py install
+  robot:
+    shell: python call_invoke.py robot
+
+devTasks:
+  build:
+    shell: python call_invoke.py build
+  test:
+    shell: python call_invoke.py test
+  install:
+    shell: python call_invoke.py install
+  integration:
+    shell: python call_invoke.py integration
+  robot:
+    shell: python call_invoke.py robot
+
+environmentConfigs:
+  - setup.yaml
+
+artifactsDir: tmp
+
+PATH: []
+PYTHONPATH: []
+
+ignoreFiles: []

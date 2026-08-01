@@ -1,0 +1,10 @@
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.10.15
+  - invoke=2.2.0
+  - robotframework=7.4.2
+  - go=1.26.5
+  - make=4.4.1
+  - git=2.46.0

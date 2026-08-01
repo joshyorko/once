@@ -1,14 +1,18 @@
-.PHONY: build test integration lint lint-actions coverage dist test-release
+.PHONY: build install test integration lint lint-actions coverage dist test-release
 
 PLATFORMS = linux darwin
 ARCHITECTURES = amd64 arm64
 VERSION := $(shell git describe --tags --always)
 LDFLAGS := -ldflags "-s -w -X 'github.com/basecamp/once/internal/version.Version=$(VERSION)'"
+PREFIX ?= $(HOME)/.local
 
 TEST_RELEASE_TAG = v0.0.1-test
 
 build:
 	CGO_ENABLED=0 go build -trimpath $(LDFLAGS) -o bin/ ./cmd/...
+
+install: build
+	install -Dm755 bin/once $(DESTDIR)$(PREFIX)/bin/once
 
 build-all:
 	@for os in $(PLATFORMS); do \
