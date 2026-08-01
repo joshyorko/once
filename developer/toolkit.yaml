@@ -17,6 +17,8 @@ devTasks:
     shell: python call_invoke.py install
   integration:
     shell: python call_invoke.py integration
+  robotSmoke:
+    shell: python call_invoke.py robotSmoke
   robot:
     shell: python call_invoke.py robot
 

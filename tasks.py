@@ -31,7 +31,17 @@ def install(c):
     c.run("make install")
 
 
-@task(pre=[build])
+@task(name="robotSmoke", pre=[build])
+def robot_smoke(c):
+    """Run the fast black-box acceptance subset."""
+    _run_robot(c, "smoke", "developer/tmp/robot/smoke")
+
+
+@task(pre=[test, build])
 def robot(c):
-    """Run black-box acceptance tests against the built Once binary."""
-    c.run("python -m robot -L DEBUG -d developer/tmp/robot robot_tests")
+    """Run all container-safe black-box acceptance tests."""
+    _run_robot(c, "acceptance", "developer/tmp/robot/acceptance")
+
+
+def _run_robot(c, tag, output_dir):
+    c.run(f"python -m robot -L DEBUG --include {tag} -d {output_dir} robot_tests")

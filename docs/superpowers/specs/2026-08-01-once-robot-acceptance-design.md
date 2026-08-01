@@ -108,6 +108,20 @@ The existing first-run TUI test remains in Go integration because it already has
 
 Actual host mutation will eventually belong only in `robotHost`, require explicit invocation, and verify prerequisites before changing the host. Neither the task nor host-mutating tests are part of the initial implementation because no disposable-host runner is currently defined.
 
+## Iterative Documentation and Self-Improvement
+
+Once will adopt the evidence-backed self-improvement pattern used in Camp and Project Bluefin work.
+
+- `docs/skills/` is the canonical home for reusable developer and operator knowledge. The initial guide is `docs/skills/rcc-development.md`, indexed by `docs/skills/README.md`.
+- `AGENTS.md` requires every implementation, debugging, review, and verification lane to improve or explicitly propose a correction to the relevant canonical guide when it learns something durable.
+- Documentation changes must be supported by code, tests, an observed failure, a verified command result, or an authoritative upstream source. Planned behavior must not be described as implemented.
+- Per-run diaries and cosmetic prose are prohibited. Existing guidance is corrected before a new guide is created.
+- Every lane returns a documentation receipt naming the canonical file, durable learning, evidence, stale guidance removed, and remaining uncertainty.
+- `docs/docs_test.go` rejects broken index links, missing RCC task commands, and blurred claims about unit, integration, Robot, host, or release evidence.
+- The normal Docker-free `test` task includes documentation contract tests.
+
+Once will not add Camp's full Cobra command-reference generator in this change because the Once command tree is not being modified. Robot CLI/help coverage and the RCC task documentation contract are the relevant drift boundaries for this delivery.
+
 ## Artifacts
 
 RCC keeps `artifactsDir: tmp`, resolving to `developer/tmp`. Robot Framework reports are written beneath `developer/tmp/robot`, with separate subdirectories for smoke, acceptance, and host runs.
@@ -116,18 +130,20 @@ Generated artifacts remain ignored by Git. A new run must not warn about stale R
 
 ## Migration Sequence
 
-1. Introduce shared Robot resources and unique-run isolation.
-2. Move the existing smoke cases into capability suites and tag them `smoke`.
-3. Add CLI failure and exit-code coverage.
-4. Add application update, multi-app, collision, and persistence coverage.
-5. Add backup and restore coverage.
-6. Add accessory coverage using a deterministic fixture.
-7. Add teardown resource-leak assertions.
-8. Compare Robot scenarios with Go integration tests and remove only proven direct duplication.
+1. Establish the repository self-improvement contract, canonical RCC guide, index, and documentation tests.
+2. Introduce shared Robot resources and unique-run isolation.
+3. Move the existing smoke cases into capability suites and tag them `smoke`.
+4. Add CLI failure and exit-code coverage.
+5. Add application update, multi-app, collision, and persistence coverage.
+6. Add backup and restore coverage.
+7. Add accessory coverage using a deterministic fixture.
+8. Add teardown resource-leak assertions.
+9. Reconcile the canonical RCC guide with observed results and compare Robot scenarios with Go integration tests, removing only proven direct duplication.
 
 ## Acceptance Criteria
 
 - `rcc run -r developer/toolkit.yaml --dev -t test` passes without starting Docker containers.
+- The Docker-free `test` task runs documentation contract tests as well as Go unit tests.
 - `rcc run -r developer/toolkit.yaml --dev -t robotSmoke` passes and leaves no Docker resources.
 - `rcc run -r developer/toolkit.yaml --dev -t robot` exercises all container-safe suites and leaves no Docker resources.
 - A failing command can be asserted without the Robot helper forcing an immediate success-only failure.
@@ -135,3 +151,5 @@ Generated artifacts remain ignored by Git. A new run must not warn about stale R
 - No `.rcc` artifact directory is introduced.
 - Existing internal Go integration coverage is retained unless a direct duplicate is demonstrated.
 - Host-mutating commands never run through the default `test`, `integration`, or `robot` tasks.
+- `docs/skills/README.md` indexes every canonical guide, and documentation tests reject stale RCC task commands and overstated evidence.
+- Every implementation lane returns the required documentation improvement receipt, with remaining uncertainty stated explicitly.

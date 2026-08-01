@@ -23,7 +23,7 @@ build-all:
 	done
 
 test:
-	go test ./internal/...
+	go test ./internal/... ./docs
 
 integration:
 	go test -v -count=1 ./integration/...

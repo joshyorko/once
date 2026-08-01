@@ -1,5 +1,7 @@
 import re
 import socket
+import subprocess
+import uuid
 
 
 ANSI_ESCAPE = re.compile(
@@ -15,3 +17,24 @@ def free_port():
 
 def strip_ansi(value):
     return ANSI_ESCAPE.sub("", value)
+
+
+def make_run_id():
+    return uuid.uuid4().hex[:10]
+
+
+def once_resources(namespace):
+    commands = (
+        ("docker", "ps", "-a", "--format", "{{.Names}}"),
+        ("docker", "network", "ls", "--format", "{{.Name}}"),
+        ("docker", "volume", "ls", "--format", "{{.Name}}"),
+    )
+    resources = []
+    for command in commands:
+        result = subprocess.run(command, check=True, capture_output=True, text=True)
+        resources.extend(
+            name
+            for name in result.stdout.splitlines()
+            if name == namespace or name.startswith(f"{namespace}-")
+        )
+    return sorted(set(resources))

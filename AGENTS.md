@@ -74,6 +74,17 @@ go test -v -run TestName ./internal/...
 - Regularly check your work with the linter and LSP to ensure it follows conventions, and run tests as needed to ensure they pass.
 - Consider opportunities to refactor large methods into smaller pieces, and spot opportunities where it's worth extracting functionality into a new type. But do not go overboard with this.
 
+## Mandatory Self-Improvement Contract
+
+Every implementation, review, debugging, reconnaissance, and verification task must leave Once's repository-local operational guidance measurably better in correctness, completeness, discoverability, determinism, testability, or recovery guidance.
+
+- docs/skills/ is the canonical home for reusable operational knowledge; correct an existing guide before creating another.
+- Document only behavior backed by code, tests, commands, observed failures, or authoritative upstream behavior.
+- Replace stale or contradictory guidance when evidence changes; do not create per-run diaries or cosmetic prose.
+- Mutating lanes update the canonical guide; read-only lanes propose an exact delta.
+- Every lane returns the Documentation improvement receipt from docs/skills/README.md.
+- Parent work cannot complete until receipts are reconciled and remaining uncertainty is explicit.
+
 ## Agent behaviour
 
 - Don't make commits, or push changes to remotes. I will take care of this myself.
